@@ -177,9 +177,9 @@ JSON으로 출력:
     return result;
   }
 
-  // ── Step 5: Gemini — generate EN/ES cards ──
+  // ── Step 5: EN/ES 카드 생성 (Gemini 우선 → Groq fallback) ──
 
-  Future<Map<String, dynamic>> geminiGenerateCard({
+  Future<Map<String, dynamic>> generateCard({
     required String koreanSummary,
     required String reactionTone,
     required List<Map<String, dynamic>> keyReactions,
@@ -197,9 +197,8 @@ JSON으로 출력:
         .join('\n');
 
     _geminiCallCount++;
-    debugPrint('[KOK Pipeline] Gemini call #$_geminiCallCount: generating card');
 
-    final result = await _ai.callGeminiJson('''
+    final prompt = '''
 You are KOK's content writer — you translate the Korean K-pop conversation for international fans.
 
 Your voice: witty, sharp, insider-tone. Like a bilingual Korean friend explaining what's REALLY going on.
@@ -247,7 +246,10 @@ QUALITY RULES:
 4. SPANISH: Not Google Translate. Natural Latin American / Spanish Gen-Z tone.
 5. top_reactions: 2-3 entries showing DIFFERENT viewpoints (fans vs general public, positive vs critical).
 6. NO: generic filler, "fans are excited", "this is big news". Be SPECIFIC.
-''', maxTokens: 2048);
+''';
+
+    // Gemini 우선 → Groq fallback (자동 전환)
+    final result = await _ai.generateCardJson(prompt, maxTokens: 2048);
 
     final titleEn = result['issue_title_en'] as String? ?? '';
     final bodyEn = result['what_happened_en'] as String? ?? '';
@@ -264,6 +266,7 @@ QUALITY RULES:
   Future<List<Map<String, dynamic>>> processNewsBatch(
     List<Map<String, dynamic>> rawCandidates,
   ) async {
+    _ai.resetCooldowns();
     debugPrint('[KOK Pipeline] Starting batch: ${rawCandidates.length} raw candidates');
 
     final filtered = preFilter(rawCandidates);
@@ -328,7 +331,7 @@ QUALITY RULES:
         // Gemini rate limit 방지: 호출 간 3초 간격
         if (i > 0) await Future.delayed(const Duration(seconds: 3));
 
-        final card = await geminiGenerateCard(
+        final card = await generateCard(
           koreanSummary: summary['issue_summary_ko'] as String? ?? '',
           reactionTone: summary['reaction_tone'] as String? ?? 'neutral',
           keyReactions: List<Map<String, dynamic>>.from(summary['key_reactions'] ?? []),
