@@ -152,33 +152,36 @@ Each array contains indices of titles that belong to the same issue. Maximum 8 c
     debugPrint('[KOK Pipeline] Groq call #$_groqCallCount: "$title"');
 
     final result = await _ai.callGroqJson('''
-Analyze this Korean K-pop news item.
+너는 한국 K-pop 여론 분석 전문가야. 아래 한국어 뉴스를 분석해.
 
-Title: ${title.length > 120 ? '${title.substring(0, 120)}...' : title}
-Summary: ${snippet.length > 400 ? '${snippet.substring(0, 400)}...' : snippet}
+제목: ${title.length > 120 ? '${title.substring(0, 120)}...' : title}
+내용: ${snippet.length > 400 ? '${snippet.substring(0, 400)}...' : snippet}
 
 $commentsSection
 
-Output JSON:
+JSON으로 출력:
 {
   "is_relevant": true,
-  "issue_summary_ko": "2-3 sentence Korean summary of the core issue",
-  "reaction_tone": "positive/negative/mixed/neutral",
-  "issue_tags": ["COMEBACK","CONTROVERSY"],
-  "artist_tags": ["BTS","aespa"],
+  "issue_summary_ko": "핵심을 짚는 한국어 요약 (2~3문장, 맥락 포함)",
+  "reaction_tone": "supportive/critical/divided/amused/neutral",
+  "issue_tags": ["COMEBACK"],
+  "artist_tags": ["BTS"],
   "key_reactions": [
-    {"text": "representative Korean comment or plausible reaction", "tone": "positive", "likes": 1234}
+    {"text": "실제 한국 대중 반응을 대표하는 댓글 (한국어)", "tone": "supportive", "likes": 1234}
   ],
   "safety_flag": "safe",
   "importance_score": 7
 }
 
-Rules:
-- Set is_relevant to true if this is about K-pop idols, agencies, or the K-pop industry
-- issue_tags MUST be from: COMEBACK, CHART, AWARD, AGENCY, CONTRACT, CONTROVERSY, FANDOM, MILITARY, RELATIONSHIP, LEGAL, SOCIAL_MEDIA, PERFORMANCE, COLLABORATION, BRAND_DEAL, VARIETY_SHOW, WORLD_TOUR, DEBUT, DISBANDMENT, SOLO, OST
-- key_reactions: provide 2-3 entries. If no real comments given, create realistic Korean public reactions
-- artist_tags: extract actual artist/agency names mentioned
-- safety_flag: "safe" unless content contains hate speech, unverified rumors, or privacy violations
+규칙:
+- is_relevant: K-pop 아이돌, 소속사, 업계 뉴스면 true
+- issue_summary_ko: "왜 이게 화제인지"를 담아야 함. 단순 사실 나열 X, 맥락과 의미 포함 O
+- reaction_tone: 한국 대중 반응의 전체 분위기. supportive(응원), critical(비판), divided(찬반), amused(웃김/밈), neutral(담담)
+- key_reactions: 2~3개. 서로 다른 시각을 보여주는 반응들. 실제 댓글이 없으면 한국 커뮤니티(더쿠/인스티즈/네이버) 분위기에 맞는 현실적인 반응 생성. "ㅋㅋㅋ", "ㄷㄷ", "와..." 같은 한국식 표현 사용 OK
+- issue_tags: COMEBACK, CHART, AWARD, AGENCY, CONTRACT, CONTROVERSY, FANDOM, MILITARY, RELATIONSHIP, LEGAL, SOCIAL_MEDIA, PERFORMANCE, COLLABORATION, BRAND_DEAL, VARIETY_SHOW, WORLD_TOUR, DEBUT, DISBANDMENT, SOLO, OST 중 선택
+- artist_tags: 뉴스에 언급된 실제 아티스트/소속사 이름
+- safety_flag: 혐오/검증안된루머/사생활침해면 "blocked", 아니면 "safe"
+- importance_score: 1~10 (10이 가장 핫한 이슈)
 ''', maxTokens: 1024);
 
     _summaryCache[contentHash] = result;
@@ -208,41 +211,53 @@ Rules:
     debugPrint('[KOK Pipeline] Gemini call #$_geminiCallCount: generating card');
 
     final result = await _ai.callGeminiJson('''
-You are KOK's content writer. Create a K-pop news card for international fans.
-Write in an engaging, catchy, Gen-Z-friendly tone. Be authentic about Korean opinions.
+You are KOK's content writer — you translate the Korean K-pop conversation for international fans.
 
-Korean Issue Summary: $koreanSummary
-Overall Reaction Tone: $reactionTone
+Your voice: witty, sharp, insider-tone. Like a bilingual Korean friend explaining what's REALLY going on.
+NOT: robotic news reporter. NOT: clickbait youtuber.
+
+---
+
+[INPUT — Korean analysis]
+Korean Summary: $koreanSummary
+Reaction Tone: $reactionTone
 Key Korean Reactions:
 $reactionsStr
-Issue Tags: ${issueTags.join(', ')}
-Artists/Agencies: ${artistTags.join(', ')}
-Original Sources:
+Tags: ${issueTags.join(', ')}
+Artists: ${artistTags.join(', ')}
+Sources:
 $sourcesStr
 
-Generate a KOK card in BOTH English and Spanish. Output JSON:
+---
+
+[OUTPUT — JSON, BOTH English AND Spanish]
 {
-  "issue_title_en": "Catchy English headline (max 120 chars)",
-  "issue_title_es": "Spanish headline (max 120 chars)",
-  "what_happened_en": "Factual summary (max 400 chars)",
-  "what_happened_es": "Same in Spanish",
-  "why_it_matters_en": "Why this matters in Korea (max 400 chars)",
-  "why_it_matters_es": "Same in Spanish",
-  "korean_reaction_summary_en": "Summary of Korean reactions (max 500 chars)",
-  "korean_reaction_summary_es": "Same in Spanish",
+  "issue_title_en": "Headline that hooks. Sharp, clear, max 100 chars. No ALL CAPS. No clickbait.",
+  "issue_title_es": "Same energy in Spanish",
+  "what_happened_en": "The facts — what actually happened. Clear, concise, max 350 chars.",
+  "what_happened_es": "Spanish version",
+  "why_it_matters_en": "Why Koreans care about this. Industry/cultural significance. Max 350 chars.",
+  "why_it_matters_es": "Spanish version",
+  "korean_reaction_summary_en": "The real vibe — how Korean netizens/public are reacting. Show the spectrum of opinions. Capture the tone (sarcasm, humor, outrage, support). Max 450 chars.",
+  "korean_reaction_summary_es": "Spanish version",
   "top_reactions": [
-    {"content_en": "Translated reaction", "content_es": "Spanish", "likes": 12345, "source": "Naver"}
+    {"content_en": "Translated Korean reaction (keep the flavor — sarcasm, wit, slang)", "content_es": "Spanish", "likes": 12345, "source": "Naver"},
+    {"content_en": "A different perspective/reaction", "content_es": "Spanish", "likes": 5678, "source": "YouTube"}
   ],
-  "context_for_fans_en": "Cultural context for international fans (max 500 chars)",
-  "context_for_fans_es": "Same in Spanish",
+  "context_for_fans_en": "What international fans might not know — cultural context, industry norms, why Koreans react this way. Max 400 chars.",
+  "context_for_fans_es": "Spanish version",
   "sentiment": "$reactionTone"
 }
 
-Rules:
-- Title: catchy but NOT clickbait
-- Show REAL diversity of Korean opinions
-- top_reactions: 2-3 entries with different viewpoints
-- context_for_fans: explain Korean cultural nuances fans might miss
+---
+
+QUALITY RULES:
+1. TITLE: Would you actually tap on this? If not, rewrite it.
+2. REACTIONS: Preserve the original Korean flavor. "Koreans are saying..." is boring. Instead: capture the actual wit, sarcasm, or raw emotion.
+3. CONTEXT: This is KOK's killer feature. Explain things like military service culture, music show wins meaning, Melon chart politics, agency reputation, trainee systems — things only someone IN Korea would know.
+4. SPANISH: Not Google Translate. Natural Latin American / Spanish Gen-Z tone.
+5. top_reactions: 2-3 entries showing DIFFERENT viewpoints (fans vs general public, positive vs critical).
+6. NO: generic filler, "fans are excited", "this is big news". Be SPECIFIC.
 ''', maxTokens: 2048);
 
     final titleEn = result['issue_title_en'] as String? ?? '';
