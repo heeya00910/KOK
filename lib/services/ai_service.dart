@@ -77,7 +77,7 @@ class AiService {
         'Authorization': 'Bearer $_cerebrasKey',
       },
       body: jsonEncode({
-        'model': 'llama-3.3-70b',
+        'model': 'llama3.1-8b',
         'messages': [
           {'role': 'system', 'content': 'You are a K-pop content writer. Be creative, witty, and culturally accurate. Respond in the exact format requested.'},
           {'role': 'user', 'content': prompt},

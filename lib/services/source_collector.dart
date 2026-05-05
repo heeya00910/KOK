@@ -198,6 +198,14 @@ class SourceCollector {
   //  Relevance Scoring
   // ═══════════════════════════════════════════
 
+  // K-pop과 무관한 연예인 (배우/셰프/웹툰작가 등) 제외
+  static const _nonKpopCelebs = [
+    '차은우', '김수현', '백종원', '기안84', '류준열', '한소희', '송혜교',
+    '현빈', '손예진', '이민호', '공유', '이종석', '박서준', '김태리',
+    '수지', '전지현', '이정재', '황정민', '마동석', '유재석', '강호동',
+    '이승기', '신동엽', '박나래', '전현무',
+  ];
+
   int calculateRelevanceScore(Map<String, dynamic> item) {
     int score = 0;
     final title = (item['title'] as String? ?? '').toLowerCase();
@@ -207,17 +215,35 @@ class SourceCollector {
     final combined = '$title $snippet';
     final publishedAt = item['published_at'] as String? ?? '';
 
-    // 메이저 아티스트 언급: +3
+    // ★ 필수 조건: K-pop 아이돌/소속사가 반드시 언급되어야 함
+    bool mentionsKpop = false;
     for (final name in _majorArtists) {
       if (combined.contains(name.toLowerCase())) {
+        mentionsKpop = true;
         score += 3;
         break;
       }
     }
     for (final name in _majorAgencies) {
       if (combined.contains(name.toLowerCase())) {
+        mentionsKpop = true;
         score += 2;
         break;
+      }
+    }
+    // 업계 전반 키워드도 허용
+    const industryMust = ['케이팝', 'k-pop', 'kpop', '아이돌', '걸그룹', '보이그룹'];
+    for (final kw in industryMust) {
+      if (combined.contains(kw)) { mentionsKpop = true; break; }
+    }
+
+    // K-pop 언급 없으면 즉시 탈락
+    if (!mentionsKpop) return -1;
+
+    // 비 K-pop 연예인만 나오는 기사 제외
+    for (final name in _nonKpopCelebs) {
+      if (combined.contains(name.toLowerCase())) {
+        score -= 3;
       }
     }
 
@@ -237,7 +263,7 @@ class SourceCollector {
       }
     }
 
-    // 차트/월드투어/수상/논란/계약: +4
+    // 고임팩트 이슈: +4
     const highImpact = ['차트', '빌보드', '월드투어', '수상', '시상식',
       '논란', '계약', '재계약', '그래미', '코첼라'];
     for (final kw in highImpact) {
@@ -255,7 +281,7 @@ class SourceCollector {
       }
     }
 
-    // 제외 키워드 단독 포함: -5 (단, override 키워드가 함께 있으면 면제)
+    // 쓰레기 콘텐츠: -5 (override 키워드 있으면 면제)
     if (_trashPatterns.hasMatch(combined)) {
       bool hasOverride = false;
       for (final kw in _overrideKeywords) {
