@@ -88,34 +88,23 @@ Each array contains indices of titles that belong to the same issue. Maximum 8 c
   }
 
   // ── Step 3: Score importance ──
+  // SourceCollector의 relevance score + 클러스터 크기 + 댓글 보너스
 
   int scoreImportance(Map<String, dynamic> cluster) {
     final items = cluster['items'] as List;
-    int score = items.length * 10;
-
     final rep = cluster['representative'] as Map<String, dynamic>;
-    final title = (rep['title'] as String? ?? '').toLowerCase();
 
-    const highValueKo = ['컴백', '빌보드', '신기록', '월드투어', '수상', '데뷔', '1위', '차트'];
-    const mediumValueKo = ['논란', '소송', '열애', '입대', '계약', '탈퇴', '해체', '폭로', '사과'];
-    const highValueEn = ['comeback', 'billboard', 'record', 'world tour', 'award', 'debut', '#1', 'chart'];
-    const mediumValueEn = ['controversy', 'lawsuit', 'dating', 'military', 'contract', 'disband'];
+    // 소스 수집 단계에서 이미 계산된 relevance score 활용
+    int score = rep['_relevance'] as int? ?? 0;
 
-    for (final kw in highValueKo) {
-      if (title.contains(kw)) score += 20;
-    }
-    for (final kw in mediumValueKo) {
-      if (title.contains(kw)) score += 15;
-    }
-    for (final kw in highValueEn) {
-      if (title.contains(kw)) score += 20;
-    }
-    for (final kw in mediumValueEn) {
-      if (title.contains(kw)) score += 15;
-    }
+    // 같은 이슈의 기사 수 보너스 (클러스터 크기)
+    score += items.length * 5;
 
-    final hasComments = (rep['comments'] as List?)?.isNotEmpty ?? false;
-    if (hasComments) score += 25;
+    // 댓글 보너스
+    final comments = rep['comments'] as List?;
+    if (comments != null && comments.isNotEmpty) {
+      score += comments.length.clamp(0, 10) * 2;
+    }
 
     return score;
   }
