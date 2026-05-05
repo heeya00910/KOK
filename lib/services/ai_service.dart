@@ -1,8 +1,8 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 
-/// Low-level AI API caller with rate-limit handling
 class AiService {
   static final AiService _instance = AiService._();
   factory AiService() => _instance;
@@ -14,7 +14,7 @@ class AiService {
   String get _geminiKey => dotenv.env['GEMINI_API_KEY'] ?? '';
   String get _groqKey => dotenv.env['GROQ_API_KEY'] ?? '';
 
-  // ── Groq: filtering, summarizing, classifying ──
+  // ── Groq ──
 
   Future<String> callGroq(String prompt, {int maxTokens = 1024}) async {
     _checkCooldown(_groqCooldown, 'Groq');
@@ -41,11 +41,11 @@ class AiService {
     );
 
     if (response.statusCode == 429) {
-      _groqCooldown = DateTime.now().add(const Duration(minutes: 2));
+      _groqCooldown = DateTime.now().add(const Duration(minutes: 1));
       throw RateLimitException('Groq rate limited');
     }
     if (response.statusCode != 200) {
-      throw ApiException('Groq error ${response.statusCode}: ${response.body}');
+      throw ApiException('Groq error ${response.statusCode}: ${_safeSub(response.body)}');
     }
 
     final data = jsonDecode(response.body);
@@ -57,43 +57,58 @@ class AiService {
     return _parseJson(raw);
   }
 
-  // ── Gemini: card generation, translation, polishing ──
+  // ── Gemini (with auto-retry on rate limit) ──
 
   Future<String> callGemini(String prompt, {int maxTokens = 2048}) async {
     _checkCooldown(_geminiCooldown, 'Gemini');
 
-    final url = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$_geminiKey',
-    );
+    for (int attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        final wait = Duration(seconds: 5 * attempt);
+        debugPrint('[KOK AI] Gemini retry #${attempt + 1} after ${wait.inSeconds}s');
+        await Future.delayed(wait);
+      }
 
-    final response = await http.post(
-      url,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'contents': [
-          {
-            'parts': [
-              {'text': prompt}
-            ]
-          }
-        ],
-        'generationConfig': {
-          'temperature': 0.7,
-          'maxOutputTokens': maxTokens,
-        },
-      }),
-    );
+      final url = Uri.parse(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$_geminiKey',
+      );
 
-    if (response.statusCode == 429) {
-      _geminiCooldown = DateTime.now().add(const Duration(minutes: 2));
-      throw RateLimitException('Gemini rate limited');
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'contents': [
+            {
+              'parts': [
+                {'text': prompt}
+              ]
+            }
+          ],
+          'generationConfig': {
+            'temperature': 0.7,
+            'maxOutputTokens': maxTokens,
+          },
+        }),
+      );
+
+      if (response.statusCode == 429) {
+        debugPrint('[KOK AI] Gemini 429 on attempt ${attempt + 1}');
+        if (attempt == 2) {
+          _geminiCooldown = DateTime.now().add(const Duration(minutes: 1));
+          throw RateLimitException('Gemini rate limited after 3 attempts');
+        }
+        continue;
+      }
+
+      if (response.statusCode != 200) {
+        throw ApiException('Gemini error ${response.statusCode}: ${_safeSub(response.body)}');
+      }
+
+      final data = jsonDecode(response.body);
+      return data['candidates'][0]['content']['parts'][0]['text'] as String;
     }
-    if (response.statusCode != 200) {
-      throw ApiException('Gemini error ${response.statusCode}: ${response.body}');
-    }
 
-    final data = jsonDecode(response.body);
-    return data['candidates'][0]['content']['parts'][0]['text'] as String;
+    throw ApiException('Gemini: max retries exceeded');
   }
 
   Future<Map<String, dynamic>> callGeminiJson(String prompt, {int maxTokens = 2048}) async {
@@ -114,6 +129,9 @@ class AiService {
         .trim();
     return jsonDecode(cleaned) as Map<String, dynamic>;
   }
+
+  String _safeSub(String s, [int len = 200]) =>
+      s.length <= len ? s : s.substring(0, len);
 }
 
 class RateLimitException implements Exception {

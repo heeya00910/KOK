@@ -304,6 +304,9 @@ QUALITY RULES:
         final snippet = rep['snippet'] as String? ?? '';
         final comments = List<String>.from(rep['comments'] ?? []);
 
+        // 제목이 너무 짧거나 의미없으면 토큰 낭비 방지
+        if (title.length < 10) continue;
+
         debugPrint('[KOK Pipeline] Processing ${i + 1}/${topIssues.length}: "$title" (${comments.length} comments)');
 
         final summary = await groqSummarize(
@@ -332,6 +335,9 @@ QUALITY RULES:
                   'url': item['url']?.toString() ?? '',
                 })
             .toList();
+
+        // Gemini rate limit 방지: 호출 간 3초 간격
+        if (i > 0) await Future.delayed(const Duration(seconds: 3));
 
         final card = await geminiGenerateCard(
           koreanSummary: summary['issue_summary_ko'] as String? ?? '',
