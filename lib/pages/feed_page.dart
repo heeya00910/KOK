@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../core/theme/app_theme.dart';
 import '../providers/app_provider.dart';
-import '../widgets/kok_logo.dart';
+import '../services/content_scheduler.dart';
 import '../widgets/language_toggle.dart';
 import '../widgets/tag_filter_bar.dart';
 import '../widgets/news_card.dart';
@@ -18,11 +19,35 @@ class FeedPage extends StatefulWidget {
 
 class _FeedPageState extends State<FeedPage> {
   final _scrollController = ScrollController();
+  bool _isGenerating = false;
 
   @override
   void dispose() {
     _scrollController.dispose();
     super.dispose();
+  }
+
+  Future<void> _runPipeline(AppProvider provider) async {
+    if (_isGenerating) return;
+    setState(() => _isGenerating = true);
+
+    try {
+      await ContentScheduler().runPipeline();
+      await provider.loadArticles();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Content generated successfully'), backgroundColor: KokColors.success),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: KokColors.error),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isGenerating = false);
+    }
   }
 
   void _onArticleTap(String articleId) {
@@ -87,27 +112,40 @@ class _FeedPageState extends State<FeedPage> {
         children: [
           Row(
             children: [
-              const KokLogo(fontSize: 28, showSubtitle: false),
+              Image.asset('assets/images/kok_logo.png', height: 34, fit: BoxFit.contain),
               const Spacer(),
+              if (provider.isAdmin)
+                GestureDetector(
+                  onTap: _isGenerating ? null : () => _runPipeline(provider),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: _isGenerating ? KokColors.textMuted.withAlpha(20) : KokColors.primary.withAlpha(20),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: _isGenerating
+                        ? const SizedBox(width: 14, height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: KokColors.primary))
+                        : const Icon(Icons.auto_awesome_rounded, size: 16, color: KokColors.primary),
+                  ),
+                ),
+              if (provider.isAdmin) const SizedBox(width: 8),
               const LanguageToggle(),
               const SizedBox(width: 12),
               _buildFreeViewsBadge(provider, lang),
             ],
           ),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              Text(
-                lang == 'es'
-                    ? 'Lo que los coreanos realmente piensan'
-                    : "What Koreans actually think",
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: KokColors.textMuted,
-                  fontWeight: FontWeight.w400,
-                ),
-              ),
-            ],
+          const SizedBox(height: 6),
+          Text(
+            lang == 'es'
+                ? 'LO QUE LOS COREANOS REALMENTE PIENSAN'
+                : 'WHAT KOREANS ACTUALLY THINK',
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+              color: KokColors.textMuted.withAlpha(160),
+              letterSpacing: 2.5,
+            ),
           ),
         ],
       ),

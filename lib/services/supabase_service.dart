@@ -72,6 +72,16 @@ class SupabaseService {
     );
   }
 
+  // ── Admin: Articles ──
+
+  Future<void> deleteArticle(String articleId) async {
+    await _client.from('articles').delete().eq('id', articleId);
+  }
+
+  Future<void> updateArticle(String articleId, Map<String, dynamic> updates) async {
+    await _client.from('articles').update(updates).eq('id', articleId);
+  }
+
   // ── User Comments ──
 
   Future<List<UserComment>> fetchComments(String articleId) async {
@@ -85,21 +95,41 @@ class SupabaseService {
         .map((json) => UserComment(
               id: json['id'],
               articleId: json['article_id'],
+              userId: json['user_id'] ?? '',
               nickname: json['nickname'] ?? '',
+              nationality: json['nationality'] ?? '',
+              fandom: json['fandom'] ?? '',
               content: json['content'] ?? '',
               createdAt: DateTime.tryParse(json['created_at'] ?? '') ?? DateTime.now(),
+              editedAt: json['edited_at'] != null ? DateTime.tryParse(json['edited_at']) : null,
               likes: json['likes'] ?? 0,
             ))
         .toList();
   }
 
-  Future<void> addComment(String articleId, String nickname, String content) async {
+  Future<void> addComment(String articleId, String nickname, String content, {
+    String nationality = '',
+    String fandom = '',
+  }) async {
     await _client.from('user_comments').insert({
       'article_id': articleId,
       'user_id': _userId,
       'nickname': nickname,
       'content': content,
+      'nationality': nationality,
+      'fandom': fandom,
     });
+  }
+
+  Future<void> updateComment(String commentId, String newContent) async {
+    await _client.from('user_comments').update({
+      'content': newContent,
+      'edited_at': DateTime.now().toIso8601String(),
+    }).eq('id', commentId);
+  }
+
+  Future<void> deleteComment(String commentId) async {
+    await _client.from('user_comments').delete().eq('id', commentId);
   }
 
   Future<void> likeComment(String commentId) async {
@@ -118,12 +148,22 @@ class SupabaseService {
         .map((json) => UserComment(
               id: json['id'],
               articleId: json['article_id'],
+              userId: json['user_id'] ?? '',
               nickname: json['nickname'] ?? '',
+              nationality: json['nationality'] ?? '',
+              fandom: json['fandom'] ?? '',
               content: json['content'] ?? '',
               createdAt: DateTime.tryParse(json['created_at'] ?? '') ?? DateTime.now(),
+              editedAt: json['edited_at'] != null ? DateTime.tryParse(json['edited_at']) : null,
               likes: json['likes'] ?? 0,
             ))
         .toList();
+  }
+
+  // ── Admin: delete any comment ──
+
+  Future<void> adminDeleteComment(String commentId) async {
+    await _client.rpc('admin_delete_comment', params: {'target_comment_id': commentId});
   }
 
   // ── User Profile ──
@@ -151,5 +191,70 @@ class SupabaseService {
       'favorite_tags': favoriteTags,
       'updated_at': DateTime.now().toIso8601String(),
     });
+  }
+
+  // ── Pipeline: insert article via RPC ──
+
+  Future<String?> insertPipelineArticle(Map<String, dynamic> articleData) async {
+    final res = await _client.rpc('insert_pipeline_article', params: {
+      'article_data': articleData,
+    });
+    return res as String?;
+  }
+
+  // ── Pipeline scheduling ──
+
+  Future<bool> canRunPipeline() async {
+    final res = await _client.rpc('can_run_pipeline');
+    return res == true;
+  }
+
+  Future<String> startPipelineRun() async {
+    final res = await _client.from('pipeline_runs').insert({
+      'status': 'running',
+    }).select('id').single();
+    return res['id'] as String;
+  }
+
+  Future<void> completePipelineRun(String runId, {
+    required int candidatesFound,
+    required int articlesGenerated,
+    required int articlesBlocked,
+    required int groqCalls,
+    required int geminiCalls,
+  }) async {
+    await _client.from('pipeline_runs').update({
+      'completed_at': DateTime.now().toIso8601String(),
+      'candidates_found': candidatesFound,
+      'articles_generated': articlesGenerated,
+      'articles_blocked': articlesBlocked,
+      'groq_calls': groqCalls,
+      'gemini_calls': geminiCalls,
+      'status': 'completed',
+    }).eq('id', runId);
+  }
+
+  Future<void> failPipelineRun(String runId, String error) async {
+    await _client.from('pipeline_runs').update({
+      'completed_at': DateTime.now().toIso8601String(),
+      'status': 'failed',
+      'error_message': error,
+    }).eq('id', runId);
+  }
+
+  Future<void> markUrlProcessed(String urlHash, String originalUrl) async {
+    await _client.from('processed_urls').upsert({
+      'url_hash': urlHash,
+      'original_url': originalUrl,
+    });
+  }
+
+  Future<void> cleanupOldArticles() async {
+    await _client.rpc('cleanup_old_articles');
+  }
+
+  Future<Set<String>> getProcessedHashes() async {
+    final res = await _client.from('processed_urls').select('url_hash');
+    return (res as List).map((r) => r['url_hash'] as String).toSet();
   }
 }

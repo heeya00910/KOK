@@ -119,21 +119,7 @@ class NewsCard extends StatelessWidget {
         Positioned(
           top: 12,
           right: 12,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.black.withAlpha(150),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Image.asset('assets/images/kok_logo.png', height: 14),
-                const SizedBox(width: 4),
-                const Text('KOK', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w700)),
-              ],
-            ),
-          ),
+          child: _DdayBadge(publishedAt: article.publishedAt),
         ),
       ],
     );
@@ -296,6 +282,36 @@ class _IssueChip extends StatelessWidget {
           Text(display,
               style: const TextStyle(color: KokColors.primaryLight, fontSize: 11, fontWeight: FontWeight.w600)),
         ],
+      ),
+    );
+  }
+}
+
+class _DdayBadge extends StatelessWidget {
+  final DateTime publishedAt;
+  const _DdayBadge({required this.publishedAt});
+
+  @override
+  Widget build(BuildContext context) {
+    final daysLeft = 14 - DateTime.now().difference(publishedAt).inDays;
+    final clamped = daysLeft.clamp(0, 14);
+
+    final (color, bgAlpha) = clamped <= 2
+        ? (KokColors.error, 180)
+        : clamped <= 5
+            ? (KokColors.warning, 170)
+            : (Colors.white70, 150);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(bgAlpha),
+        borderRadius: BorderRadius.circular(8),
+        border: clamped <= 1 ? Border.all(color: KokColors.error.withAlpha(120), width: 0.5) : null,
+      ),
+      child: Text(
+        'D-$clamped',
+        style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.5),
       ),
     );
   }

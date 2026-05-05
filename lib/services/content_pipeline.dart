@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'ai_service.dart';
 import 'content_safety.dart';
+import 'supabase_service.dart';
 
 /// Full content pipeline: collect → filter → summarize → generate cards → store
 class ContentPipeline {
@@ -11,6 +13,7 @@ class ContentPipeline {
 
   final _ai = AiService();
   final _safety = ContentSafetyFilter();
+  final _supabase = SupabaseService();
 
   // Processed URL hashes to avoid reprocessing
   final Set<String> _processedHashes = {};
@@ -55,6 +58,7 @@ class ContentPipeline {
     final titles = items.map((i) => i['title'] as String? ?? '').toList();
     final titlesStr = titles.asMap().entries.map((e) => '${e.key}: ${e.value}').join('\n');
 
+    _groqCallCount++;
     final result = await _ai.callGroqJson('''
 Group these K-pop news titles into issue clusters. Titles about the same event/topic go together.
 
@@ -132,6 +136,7 @@ Each array contains indices of titles that belong to the same issue.
         .map((c) => _safety.sanitizeComment(c))
         .toList();
 
+    _groqCallCount++;
     final result = await _ai.callGroqJson('''
 Analyze this Korean K-pop news item.
 
@@ -184,6 +189,7 @@ Be strict about safety. Block unverified rumors, privacy violations, minor sexua
         .map((s) => '- ${s['title']}: ${s['url']}')
         .join('\n');
 
+    _geminiCallCount++;
     final result = await _ai.callGeminiJson('''
 You are KOK's content writer. Create a K-pop news card for international fans.
 Write in an engaging, catchy, Gen-Z-friendly tone. Be authentic about Korean opinions.
@@ -306,6 +312,14 @@ IMPORTANT:
         card['original_sources'] = sources;
         card['safety_level'] = summary['safety_flag'];
 
+        // Save to Supabase
+        try {
+          await _supabase.insertPipelineArticle(card);
+          debugPrint('[KOK Pipeline] Article saved: ${card['issue_title_en']}');
+        } catch (e) {
+          debugPrint('[KOK Pipeline] Save failed: $e');
+        }
+
         cards.add(card);
 
         // Mark URLs as processed
@@ -321,6 +335,25 @@ IMPORTANT:
 
     return cards;
   }
+
+  // ── Utilities ──
+
+  int _groqCallCount = 0;
+  int _geminiCallCount = 0;
+
+  int get groqCallCount => _groqCallCount;
+  int get geminiCallCount => _geminiCallCount;
+
+  void resetCallCounts() {
+    _groqCallCount = 0;
+    _geminiCallCount = 0;
+  }
+
+  void loadProcessedHashes(Set<String> hashes) {
+    _processedHashes.addAll(hashes);
+  }
+
+  String hashUrl(String url) => _hash(url);
 
   String _hash(String input) {
     return md5.convert(utf8.encode(input)).toString();

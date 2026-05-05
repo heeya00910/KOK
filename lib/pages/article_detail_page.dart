@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/theme/app_theme.dart';
 import '../models/news_article.dart';
+import '../models/user_profile.dart';
 import '../providers/app_provider.dart';
 import '../widgets/language_toggle.dart';
 
@@ -400,7 +401,7 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
             children: [
               _sectionAccent(),
               const SizedBox(width: 10),
-              Icon(Icons.chat_bubble_outline_rounded, size: 18, color: KokColors.textPrimary),
+              const Icon(Icons.chat_bubble_outline_rounded, size: 18, color: KokColors.textPrimary),
               const SizedBox(width: 6),
               Text(lang == 'es' ? 'Comentarios de fans' : 'Fan comments',
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: KokColors.textPrimary)),
@@ -423,65 +424,247 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
               ),
             )
           else
-            ...comments.map((comment) => Container(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: KokColors.cardBg,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: KokColors.border, width: 0.5),
+            ...comments.map((comment) => _buildCommentTile(comment, provider, lang)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCommentTile(comment, AppProvider provider, String lang) {
+    final isMine = provider.isMyComment(comment);
+    final canManage = isMine || provider.isAdmin;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: KokColors.cardBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: KokColors.border, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 28, height: 28,
+                decoration: BoxDecoration(
+                  color: KokColors.accent.withAlpha(30),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Center(
+                  child: Text(
+                    comment.nickname.isNotEmpty ? comment.nickname[0].toUpperCase() : '?',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: KokColors.accentLight),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 28, height: 28,
-                            decoration: BoxDecoration(
-                              color: KokColors.accent.withAlpha(30),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Center(
-                              child: Text(
-                                comment.nickname.isNotEmpty ? comment.nickname[0].toUpperCase() : '?',
-                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: KokColors.accentLight),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(comment.nickname,
-                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: KokColors.textPrimary)),
-                          const SizedBox(width: 8),
-                          Text(_formatTimeAgo(comment.createdAt),
-                              style: const TextStyle(fontSize: 11, color: KokColors.textMuted)),
-                          const Spacer(),
-                          GestureDetector(
-                            onTap: () => provider.likeComment(_a.id, comment.id),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  comment.likes > 0 ? Icons.thumb_up_alt_rounded : Icons.thumb_up_alt_outlined,
-                                  size: 14,
-                                  color: comment.likes > 0 ? KokColors.primary : KokColors.textMuted,
-                                ),
-                                const SizedBox(width: 4),
-                                Text('${comment.likes}',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: comment.likes > 0 ? KokColors.primary : KokColors.textMuted,
-                                    )),
-                              ],
-                            ),
-                          ),
-                        ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Row(
+                  children: [
+                    Text(comment.nickname,
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: KokColors.textPrimary)),
+                    if (comment.nationality.isNotEmpty) ...[
+                      const SizedBox(width: 5),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: KokColors.accent.withAlpha(15),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(UserProfile.shortCode(comment.nationality),
+                            style: const TextStyle(fontSize: 10, color: KokColors.accentLight, fontWeight: FontWeight.w600)),
                       ),
-                      const SizedBox(height: 8),
-                      Text(comment.content,
-                          style: const TextStyle(fontSize: 14, color: KokColors.textPrimary, height: 1.5)),
                     ],
-                  ),
-                )),
+                    if (comment.fandom.isNotEmpty) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: KokColors.primary.withAlpha(15),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(comment.fandom,
+                            style: const TextStyle(fontSize: 10, color: KokColors.primary, fontWeight: FontWeight.w500)),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(_formatTimeAgo(comment.createdAt),
+                  style: const TextStyle(fontSize: 11, color: KokColors.textMuted)),
+              if (comment.isEdited) ...[
+                const SizedBox(width: 4),
+                Text(lang == 'es' ? '(editado)' : '(edited)',
+                    style: const TextStyle(fontSize: 10, color: KokColors.textMuted, fontStyle: FontStyle.italic)),
+              ],
+              const Spacer(),
+              GestureDetector(
+                onTap: () => provider.likeComment(_a.id, comment.id),
+                child: Row(
+                  children: [
+                    Icon(
+                      provider.hasLikedComment(comment.id) ? Icons.thumb_up_alt_rounded : Icons.thumb_up_alt_outlined,
+                      size: 14,
+                      color: provider.hasLikedComment(comment.id) ? KokColors.primary : KokColors.textMuted,
+                    ),
+                    const SizedBox(width: 4),
+                    Text('${comment.likes}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: provider.hasLikedComment(comment.id) ? KokColors.primary : KokColors.textMuted,
+                        )),
+                  ],
+                ),
+              ),
+              if (canManage) ...[
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () => _showCommentActions(comment, provider, lang, isMine),
+                  child: const Icon(Icons.more_horiz_rounded, size: 18, color: KokColors.textMuted),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(comment.content,
+              style: const TextStyle(fontSize: 14, color: KokColors.textPrimary, height: 1.5)),
+        ],
+      ),
+    );
+  }
+
+  void _showCommentActions(comment, AppProvider provider, String lang, bool isMine) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+        decoration: const BoxDecoration(
+          color: KokColors.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(color: KokColors.textMuted, borderRadius: BorderRadius.circular(2)),
+            ),
+            const SizedBox(height: 20),
+            if (isMine)
+              _actionTile(
+                icon: Icons.edit_outlined,
+                label: lang == 'es' ? 'Editar comentario' : 'Edit comment',
+                onTap: () {
+                  Navigator.pop(context);
+                  _showEditCommentDialog(comment, provider, lang);
+                },
+              ),
+            _actionTile(
+              icon: Icons.delete_outline_rounded,
+              label: lang == 'es' ? 'Eliminar comentario' : 'Delete comment',
+              color: KokColors.error,
+              onTap: () {
+                Navigator.pop(context);
+                _confirmDeleteComment(comment, provider, lang);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _actionTile({required IconData icon, required String label, required VoidCallback onTap, Color? color}) {
+    final c = color ?? KokColors.textPrimary;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: c),
+            const SizedBox(width: 12),
+            Text(label, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: c)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showEditCommentDialog(comment, AppProvider provider, String lang) {
+    final controller = TextEditingController(text: comment.content);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: KokColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          lang == 'es' ? 'Editar comentario' : 'Edit comment',
+          style: const TextStyle(color: KokColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 16),
+        ),
+        content: TextField(
+          controller: controller,
+          maxLines: 4,
+          style: const TextStyle(color: KokColors.textPrimary, fontSize: 14),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: KokColors.surfaceLight,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(lang == 'es' ? 'Cancelar' : 'Cancel', style: const TextStyle(color: KokColors.textMuted)),
+          ),
+          TextButton(
+            onPressed: () {
+              final text = controller.text.trim();
+              if (text.isNotEmpty && text != comment.content) {
+                provider.editComment(_a.id, comment.id, text);
+              }
+              Navigator.pop(ctx);
+            },
+            child: Text(lang == 'es' ? 'Guardar' : 'Save',
+                style: const TextStyle(color: KokColors.primary, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeleteComment(comment, AppProvider provider, String lang) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: KokColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          lang == 'es' ? 'Eliminar comentario' : 'Delete comment',
+          style: const TextStyle(color: KokColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 16),
+        ),
+        content: Text(
+          lang == 'es' ? 'Esta acción no se puede deshacer.' : 'This action cannot be undone.',
+          style: const TextStyle(color: KokColors.textSecondary, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(lang == 'es' ? 'Cancelar' : 'Cancel', style: const TextStyle(color: KokColors.textMuted)),
+          ),
+          TextButton(
+            onPressed: () {
+              provider.deleteComment(_a.id, comment.id);
+              Navigator.pop(ctx);
+            },
+            child: Text(lang == 'es' ? 'Eliminar' : 'Delete',
+                style: const TextStyle(color: KokColors.error, fontWeight: FontWeight.w700)),
+          ),
         ],
       ),
     );

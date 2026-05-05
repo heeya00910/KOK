@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/theme/app_theme.dart';
@@ -11,25 +12,32 @@ class LoginPage extends StatefulWidget {
   State<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMixin {
+class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
   bool _isLoading = false;
   String? _error;
   late AnimationController _fadeController;
+  late AnimationController _lightController;
   late Animation<double> _fadeAnim;
 
   @override
   void initState() {
     super.initState();
     _fadeController = AnimationController(
-      duration: const Duration(milliseconds: 1000),
+      duration: const Duration(milliseconds: 1200),
       vsync: this,
     )..forward();
     _fadeAnim = CurvedAnimation(parent: _fadeController, curve: Curves.easeOut);
+
+    _lightController = AnimationController(
+      duration: const Duration(milliseconds: 6000),
+      vsync: this,
+    )..repeat();
   }
 
   @override
   void dispose() {
     _fadeController.dispose();
+    _lightController.dispose();
     super.dispose();
   }
 
@@ -67,71 +75,126 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: KokColors.background,
-      body: SafeArea(
-        child: FadeTransition(
-          opacity: _fadeAnim,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Column(
-              children: [
-                const Spacer(flex: 3),
-                _buildLogo(),
-                const SizedBox(height: 12),
-                _buildTagline(),
-                const Spacer(flex: 2),
-                if (_error != null) _buildError(),
-                _buildAppleButton(),
-                const SizedBox(height: 12),
-                _buildGoogleButton(),
-                const SizedBox(height: 24),
-                _buildTerms(),
-                const Spacer(flex: 1),
-              ],
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(
+            decoration: const BoxDecoration(
+              gradient: RadialGradient(
+                center: Alignment(0.0, -0.4),
+                radius: 1.3,
+                colors: [
+                  Color(0xFF0D1B3E),
+                  Color(0xFF080E1F),
+                  Color(0xFF050810),
+                ],
+                stops: [0.0, 0.5, 1.0],
+              ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLogo() {
-    return ShaderMask(
-      shaderCallback: (bounds) => const LinearGradient(
-        colors: [KokColors.gradientStart, KokColors.gradientEnd],
-      ).createShader(bounds),
-      child: Text(
-        'KOK',
-        style: GoogleFonts.spaceGrotesk(
-          fontSize: 64,
-          fontWeight: FontWeight.w900,
-          color: Colors.white,
-          letterSpacing: 4,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTagline() {
-    return Column(
-      children: [
-        Text(
-          "Korean's real view On K-pop",
-          style: GoogleFonts.inter(
-            fontSize: 15,
-            color: KokColors.textSecondary,
-            letterSpacing: 0.5,
+          AnimatedBuilder(
+            animation: _lightController,
+            builder: (context, _) => CustomPaint(
+              painter: _LoginLightPainter(progress: _lightController.value),
+              size: Size.infinite,
+            ),
           ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'What Koreans actually think.',
-          style: GoogleFonts.inter(
-            fontSize: 13,
-            color: KokColors.textMuted,
+          SafeArea(
+            child: FadeTransition(
+              opacity: _fadeAnim,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  children: [
+                    const Spacer(flex: 3),
+                    AnimatedBuilder(
+                      animation: _lightController,
+                      builder: (context, child) {
+                        final pulse = (sin(_lightController.value * pi * 2) * 0.3 + 0.7);
+                        return Container(
+                          decoration: BoxDecoration(
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF7C3AED).withAlpha((25 * pulse).toInt()),
+                                blurRadius: 70,
+                                spreadRadius: 25,
+                              ),
+                              BoxShadow(
+                                color: const Color(0xFFFF2D78).withAlpha((15 * pulse).toInt()),
+                                blurRadius: 50,
+                                spreadRadius: 10,
+                              ),
+                              BoxShadow(
+                                color: Colors.white.withAlpha((10 * pulse).toInt()),
+                                blurRadius: 35,
+                                spreadRadius: 3,
+                              ),
+                            ],
+                          ),
+                          child: child,
+                        );
+                      },
+                      child: Image.asset(
+                        'assets/images/kok_logo.png',
+                        height: 140,
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                    Text(
+                      "KOREAN'S REAL VIEW ON K-POP",
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withAlpha(120),
+                        letterSpacing: 4.0,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'What Koreans actually think.',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w300,
+                        color: Colors.white.withAlpha(60),
+                        letterSpacing: 0.8,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                    const Spacer(flex: 2),
+                    if (_error != null) _buildError(),
+                    if (_isLoading)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 20),
+                        child: SizedBox(
+                          width: 24, height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2, color: KokColors.primary,
+                          ),
+                        ),
+                      ),
+                    _buildAppleButton(),
+                    const SizedBox(height: 12),
+                    _buildGoogleButton(),
+                    const SizedBox(height: 28),
+                    Text(
+                      'By continuing, you agree to our Terms of Service\nand Privacy Policy',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w300,
+                        color: Colors.white.withAlpha(50),
+                        height: 1.5,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const Spacer(flex: 1),
+                  ],
+                ),
+              ),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -151,7 +214,9 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
           Expanded(
             child: Text(
               _error!,
-              style: const TextStyle(color: KokColors.error, fontSize: 13),
+              style: const TextStyle(color: KokColors.error, fontSize: 12),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -168,6 +233,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.white,
           foregroundColor: Colors.black,
+          disabledBackgroundColor: Colors.white.withAlpha(100),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           elevation: 0,
         ),
@@ -176,14 +242,8 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
           children: [
             const Icon(Icons.apple_rounded, size: 24, color: Colors.black),
             const SizedBox(width: 10),
-            Text(
-              'Continue with Apple',
-              style: GoogleFonts.inter(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Colors.black,
-              ),
-            ),
+            Text('Continue with Apple',
+              style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black)),
           ],
         ),
       ),
@@ -197,50 +257,78 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       child: OutlinedButton(
         onPressed: _isLoading ? null : _signInWithGoogle,
         style: OutlinedButton.styleFrom(
-          side: const BorderSide(color: KokColors.border),
+          side: BorderSide(color: Colors.white.withAlpha(40)),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              width: 22,
-              height: 22,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: const Text('G', textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: KokColors.textPrimary,
-                ),
-              ),
-            ),
+            Text('G', style: GoogleFonts.plusJakartaSans(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
             const SizedBox(width: 10),
-            Text(
-              'Continue with Google',
-              style: GoogleFonts.inter(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: KokColors.textPrimary,
-              ),
-            ),
+            Text('Continue with Google',
+              style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white.withAlpha(220))),
           ],
         ),
       ),
     );
   }
+}
 
-  Widget _buildTerms() {
-    return Text(
-      'By continuing, you agree to our Terms of Service\nand Privacy Policy',
-      style: GoogleFonts.inter(
-        fontSize: 11,
-        color: KokColors.textMuted,
-        height: 1.5,
-      ),
-      textAlign: TextAlign.center,
-    );
+class _LoginLightPainter extends CustomPainter {
+  final double progress;
+  _LoginLightPainter({required this.progress});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final beams = [
+      (0.10, 310.0, 0.05, 0.7),
+      (0.30, 260.0, 0.04, 1.1),
+      (0.55, 220.0, 0.04, 0.6),
+      (0.75, 330.0, 0.05, 1.3),
+      (0.90, 280.0, 0.03, 0.9),
+    ];
+
+    for (final (bx, hue, bw, spd) in beams) {
+      final phase = (progress * spd) % 1.0;
+      final sway = sin(phase * pi * 2) * 0.05;
+      final pulse = (sin(phase * pi * 2) * 0.5 + 0.5) * 0.07;
+
+      final cx = (bx + sway) * size.width;
+      final w = bw * size.width;
+
+      final paint = Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            HSLColor.fromAHSL(pulse, hue, 0.7, 0.55).toColor(),
+            HSLColor.fromAHSL(pulse * 0.2, hue, 0.5, 0.35).toColor(),
+            Colors.transparent,
+          ],
+          stops: const [0.0, 0.3, 0.8],
+        ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
+
+      final path = Path()
+        ..moveTo(cx - w * 0.2, 0)
+        ..lineTo(cx + w * 0.2, 0)
+        ..lineTo(cx + w * 2.5, size.height)
+        ..lineTo(cx - w * 2.5, size.height)
+        ..close();
+
+      canvas.drawPath(path, paint);
+    }
+
+    final glow1 = Paint()
+      ..color = const Color(0xFFFF2D78).withAlpha((sin(progress * pi * 2) * 4 + 5).toInt())
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 100);
+    canvas.drawCircle(Offset(size.width * 0.5, size.height * 0.2), 140, glow1);
+
+    final glow2 = Paint()
+      ..color = const Color(0xFF7C3AED).withAlpha((cos(progress * pi * 2) * 3 + 4).toInt())
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 120);
+    canvas.drawCircle(Offset(size.width * 0.3, size.height * 0.1), 100, glow2);
   }
+
+  @override
+  bool shouldRepaint(_LoginLightPainter old) => old.progress != progress;
 }

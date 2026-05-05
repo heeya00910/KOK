@@ -45,7 +45,7 @@ dependencies:
   http: ^1.6.0
   flutter_svg: ^2.2.4
   supabase_flutter: ^2.12.4
-  google_sign_in: ^7.2.0
+  google_sign_in: ^6.2.2
   sign_in_with_apple: ^7.0.1
   flutter_dotenv: ^6.0.1
   crypto: ^3.0.7

@@ -17,32 +17,42 @@ class AuthService {
 
   Stream<AuthState> get authStateChanges => _supabase.auth.onAuthStateChange;
 
-  bool _googleInitialized = false;
+  static const _webClientId =
+      '107880322066-vmla6as8t2ih2mbn9c2hu5cmtdubiv6r.apps.googleusercontent.com';
 
-  Future<void> _ensureGoogleInitialized() async {
-    if (_googleInitialized) return;
-    const webClientId = ''; // Set from Google Cloud Console
-    const iosClientId = ''; // Set from Google Cloud Console
-
-    await GoogleSignIn.instance.initialize(
-      serverClientId: webClientId.isNotEmpty ? webClientId : null,
-      clientId: iosClientId.isNotEmpty ? iosClientId : null,
-    );
-    _googleInitialized = true;
-  }
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    serverClientId: _webClientId,
+  );
 
   Future<AuthResponse> signInWithGoogle() async {
-    await _ensureGoogleInitialized();
+    final googleUser = await _googleSignIn.signIn();
+    if (googleUser == null) throw AuthException('Login cancelled');
 
-    final googleUser = await GoogleSignIn.instance.authenticate();
+    final googleAuth = await googleUser.authentication;
+    final idToken = googleAuth.idToken;
+    final accessToken = googleAuth.accessToken;
 
-    final idToken = googleUser.authentication.idToken;
-    if (idToken == null) throw AuthException('No Google ID token');
+    if (idToken == null) throw AuthException('No ID token');
 
-    return _supabase.auth.signInWithIdToken(
-      provider: OAuthProvider.google,
-      idToken: idToken,
-    );
+    try {
+      return await _supabase.auth.signInWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+        accessToken: accessToken,
+      );
+    } catch (e) {
+      final parts = idToken.split('.');
+      if (parts.length == 3) {
+        final payload = utf8.decode(
+            base64Url.decode(base64Url.normalize(parts[1])));
+        final data = jsonDecode(payload) as Map<String, dynamic>;
+        final aud = data['aud'];
+        throw AuthException(
+          'Supabase > Google Provider > Client ID 에 이 값을 넣으세요:\n$aud',
+        );
+      }
+      rethrow;
+    }
   }
 
   Future<AuthResponse> signInWithApple() async {
@@ -69,15 +79,17 @@ class AuthService {
 
   Future<void> signOut() async {
     try {
-      await GoogleSignIn.instance.signOut();
+      await _googleSignIn.signOut();
     } catch (_) {}
     await _supabase.auth.signOut();
   }
 
   String _generateNonce([int length = 32]) {
-    const charset = '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
+    const charset =
+        '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
     final random = Random.secure();
-    return List.generate(length, (_) => charset[random.nextInt(charset.length)]).join();
+    return List.generate(
+        length, (_) => charset[random.nextInt(charset.length)]).join();
   }
 }
 

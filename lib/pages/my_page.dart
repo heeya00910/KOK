@@ -5,7 +5,9 @@ import '../core/theme/app_theme.dart';
 import '../core/constants/tags.dart';
 import '../models/user_profile.dart';
 import '../providers/app_provider.dart';
+import '../services/auth_service.dart';
 import '../widgets/language_toggle.dart';
+import 'login_page.dart';
 
 class MyPage extends StatelessWidget {
   const MyPage({super.key});
@@ -26,6 +28,7 @@ class MyPage extends StatelessWidget {
             SliverToBoxAdapter(child: _buildFavoriteTagsSection(context, provider, lang, profile)),
             SliverToBoxAdapter(child: _buildMyCommentsHeader(lang, provider)),
             _buildMyCommentsList(provider, lang),
+            SliverToBoxAdapter(child: _buildAccountSection(context, provider, lang)),
             const SliverToBoxAdapter(child: SizedBox(height: 100)),
           ],
         ),
@@ -268,6 +271,98 @@ class MyPage extends StatelessWidget {
               );
             }).toList(),
           ),
+          if (profile.favoriteTags.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            _buildRepresentativeFandomSelector(provider, lang, profile),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRepresentativeFandomSelector(
+    AppProvider provider,
+    String lang,
+    UserProfile profile,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: KokColors.surfaceLight,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: KokColors.border, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.badge_rounded, size: 16, color: KokColors.primary),
+              const SizedBox(width: 6),
+              Text(
+                lang == 'es' ? 'Badge de comentario' : 'Comment badge',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: KokColors.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                lang == 'es'
+                    ? 'Se muestra junto a tu nombre'
+                    : 'Shown next to your name',
+                style: const TextStyle(fontSize: 10, color: KokColors.textMuted),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: profile.favoriteTags.map((tag) {
+              final isRep = profile.representativeFandom == tag;
+              return GestureDetector(
+                onTap: () => provider.updateRepresentativeFandom(tag),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: isRep
+                        ? KokColors.primary.withAlpha(20)
+                        : KokColors.cardBg,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: isRep
+                          ? KokColors.primary.withAlpha(120)
+                          : KokColors.border,
+                      width: isRep ? 1.5 : 0.5,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isRep) ...[
+                        const Icon(Icons.check_circle_rounded,
+                            size: 14, color: KokColors.primary),
+                        const SizedBox(width: 5),
+                      ],
+                      Text(
+                        tag,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: isRep ? FontWeight.w700 : FontWeight.w500,
+                          color: isRep
+                              ? KokColors.primary
+                              : KokColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
         ],
       ),
     );
@@ -410,7 +505,24 @@ class MyPage extends StatelessWidget {
                         color: KokColors.textMuted,
                       ),
                     ),
+                    if (comment.isEdited) ...[
+                      const SizedBox(width: 4),
+                      Text(
+                        lang == 'es' ? '(editado)' : '(edited)',
+                        style: const TextStyle(fontSize: 10, color: KokColors.textMuted, fontStyle: FontStyle.italic),
+                      ),
+                    ],
                     const Spacer(),
+                    GestureDetector(
+                      onTap: () => _showEditCommentDialog(context, provider, comment, lang),
+                      child: const Icon(Icons.edit_outlined, size: 15, color: KokColors.textMuted),
+                    ),
+                    const SizedBox(width: 12),
+                    GestureDetector(
+                      onTap: () => _confirmDeleteComment(context, provider, comment, lang),
+                      child: const Icon(Icons.delete_outline_rounded, size: 15, color: KokColors.textMuted),
+                    ),
+                    const SizedBox(width: 12),
                     const Icon(Icons.thumb_up_alt_rounded,
                         size: 13, color: KokColors.textMuted),
                     const SizedBox(width: 4),
@@ -545,6 +657,241 @@ class MyPage extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showEditCommentDialog(BuildContext context, AppProvider provider, comment, String lang) {
+    final controller = TextEditingController(text: comment.content);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: KokColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          lang == 'es' ? 'Editar comentario' : 'Edit comment',
+          style: const TextStyle(color: KokColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 16),
+        ),
+        content: TextField(
+          controller: controller,
+          maxLines: 4,
+          style: const TextStyle(color: KokColors.textPrimary, fontSize: 14),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: KokColors.surfaceLight,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(lang == 'es' ? 'Cancelar' : 'Cancel', style: const TextStyle(color: KokColors.textMuted)),
+          ),
+          TextButton(
+            onPressed: () {
+              final text = controller.text.trim();
+              if (text.isNotEmpty && text != comment.content) {
+                provider.editComment(comment.articleId, comment.id, text);
+              }
+              Navigator.pop(ctx);
+            },
+            child: Text(lang == 'es' ? 'Guardar' : 'Save',
+                style: const TextStyle(color: KokColors.primary, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeleteComment(BuildContext context, AppProvider provider, comment, String lang) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: KokColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          lang == 'es' ? 'Eliminar comentario' : 'Delete comment',
+          style: const TextStyle(color: KokColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 16),
+        ),
+        content: Text(
+          lang == 'es' ? 'Esta acción no se puede deshacer.' : 'This action cannot be undone.',
+          style: const TextStyle(color: KokColors.textSecondary, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(lang == 'es' ? 'Cancelar' : 'Cancel', style: const TextStyle(color: KokColors.textMuted)),
+          ),
+          TextButton(
+            onPressed: () {
+              provider.deleteComment(comment.articleId, comment.id);
+              Navigator.pop(ctx);
+            },
+            child: Text(lang == 'es' ? 'Eliminar' : 'Delete',
+                style: const TextStyle(color: KokColors.error, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccountSection(BuildContext context, AppProvider provider, String lang) {
+    final email = AuthService().currentUser?.email ?? '';
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 28, 20, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Divider(color: KokColors.border, height: 1),
+          const SizedBox(height: 20),
+          if (email.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Row(
+                children: [
+                  const Icon(Icons.mail_outline_rounded, size: 16, color: KokColors.textMuted),
+                  const SizedBox(width: 8),
+                  Text(email, style: const TextStyle(fontSize: 13, color: KokColors.textMuted)),
+                  if (provider.isAdmin) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: KokColors.primary.withAlpha(20),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text('Admin',
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: KokColors.primary)),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          _buildAccountTile(
+            icon: Icons.logout_rounded,
+            label: lang == 'es' ? 'Cerrar sesion' : 'Log out',
+            color: KokColors.textSecondary,
+            onTap: () => _confirmLogout(context, lang),
+          ),
+          const SizedBox(height: 8),
+          _buildAccountTile(
+            icon: Icons.person_off_rounded,
+            label: lang == 'es' ? 'Eliminar cuenta' : 'Delete account',
+            color: KokColors.error,
+            onTap: () => _confirmDeleteAccount(context, lang),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccountTile({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: color.withAlpha(8),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withAlpha(25), width: 0.5),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: color),
+            const SizedBox(width: 10),
+            Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: color)),
+            const Spacer(),
+            Icon(Icons.chevron_right_rounded, size: 18, color: color.withAlpha(120)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _confirmLogout(BuildContext context, String lang) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: KokColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          lang == 'es' ? 'Cerrar sesion' : 'Log out',
+          style: const TextStyle(color: KokColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 16),
+        ),
+        content: Text(
+          lang == 'es' ? 'Seguro que quieres cerrar sesion?' : 'Are you sure you want to log out?',
+          style: const TextStyle(color: KokColors.textSecondary, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(lang == 'es' ? 'Cancelar' : 'Cancel',
+                style: const TextStyle(color: KokColors.textMuted)),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await AuthService().signOut();
+              if (context.mounted) {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const LoginPage()),
+                  (_) => false,
+                );
+              }
+            },
+            child: Text(lang == 'es' ? 'Salir' : 'Log out',
+                style: const TextStyle(color: KokColors.error, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeleteAccount(BuildContext context, String lang) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: KokColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          lang == 'es' ? 'Eliminar cuenta' : 'Delete account',
+          style: const TextStyle(color: KokColors.error, fontWeight: FontWeight.w700, fontSize: 16),
+        ),
+        content: Text(
+          lang == 'es'
+              ? 'Tu cuenta y todos tus datos seran eliminados permanentemente. Esta accion no se puede deshacer.'
+              : 'Your account and all your data will be permanently deleted. This cannot be undone.',
+          style: const TextStyle(color: KokColors.textSecondary, fontSize: 14, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(lang == 'es' ? 'Cancelar' : 'Cancel',
+                style: const TextStyle(color: KokColors.textMuted)),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              try {
+                await AuthService().signOut();
+              } catch (_) {}
+              if (context.mounted) {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const LoginPage()),
+                  (_) => false,
+                );
+              }
+            },
+            child: Text(lang == 'es' ? 'Eliminar' : 'Delete',
+                style: const TextStyle(color: KokColors.error, fontWeight: FontWeight.w700)),
+          ),
+        ],
       ),
     );
   }

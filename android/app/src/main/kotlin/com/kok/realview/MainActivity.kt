@@ -1,4 +1,4 @@
-package com.kok.app.kok
+package com.kok.realview
 
 import io.flutter.embedding.android.FlutterActivity
 

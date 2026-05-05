@@ -1,9 +1,13 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/news_article.dart';
 import '../models/comment.dart';
 import '../models/user_profile.dart';
 import '../core/constants/mock_data.dart';
+import '../services/supabase_service.dart';
+import '../services/content_scheduler.dart';
 
 class AppProvider extends ChangeNotifier {
   String _language = 'en';
@@ -17,6 +21,9 @@ class AppProvider extends ChangeNotifier {
 
   UserProfile _profile = UserProfile();
   final Map<String, List<UserComment>> _commentsByArticle = {};
+  final Set<String> _likedCommentIds = {};
+
+  bool _isAdmin = false;
 
   String get language => _language;
   List<NewsArticle> get articles => _articles;
@@ -26,6 +33,15 @@ class AppProvider extends ChangeNotifier {
   int get adWatchCount => _adWatchCount;
   String? get pendingUnlockArticleId => _pendingUnlockArticleId;
   UserProfile get profile => _profile;
+  bool get isAdmin => _isAdmin;
+
+  String? get _userId {
+    try {
+      return Supabase.instance.client.auth.currentUser?.id;
+    } catch (_) {
+      return null;
+    }
+  }
 
   List<NewsArticle> get filteredArticles {
     if (_selectedTags.isEmpty) return _articles;
@@ -59,6 +75,7 @@ class AppProvider extends ChangeNotifier {
     _profile = UserProfile(
       nickname: prefs.getString('nickname') ?? '',
       nationality: prefs.getString('nationality') ?? '',
+      representativeFandom: prefs.getString('representative_fandom') ?? '',
       favoriteTags: prefs.getStringList('favorite_tags') ?? [],
     );
 
@@ -71,16 +88,113 @@ class AppProvider extends ChangeNotifier {
       await prefs.setString('last_reset', today);
     }
 
+    await _checkAdminRole();
     await loadArticles();
+
+    if (_isAdmin) {
+      ContentScheduler().start();
+    }
+
     notifyListeners();
   }
+
+  // ── Admin ──
+
+  Future<void> _checkAdminRole() async {
+    final uid = _userId;
+    if (uid == null) {
+      _isAdmin = false;
+      debugPrint('[KOK] Admin check: no user logged in');
+      return;
+    }
+    try {
+      final email = Supabase.instance.client.auth.currentUser?.email ?? '';
+      debugPrint('[KOK] Admin check: uid=$uid, email=$email');
+
+      final res = await Supabase.instance.client
+          .from('profiles')
+          .select('role')
+          .eq('id', uid)
+          .maybeSingle();
+
+      if (res == null) {
+        debugPrint('[KOK] Admin check: no profile found — creating...');
+        await Supabase.instance.client.from('profiles').insert({
+          'id': uid,
+          'role': 'user',
+        });
+        final refreshed = await Supabase.instance.client
+            .from('profiles')
+            .select('role')
+            .eq('id', uid)
+            .maybeSingle();
+        _isAdmin = refreshed != null && refreshed['role'] == 'admin';
+      } else {
+        _isAdmin = res['role'] == 'admin';
+      }
+
+      debugPrint('[KOK] Admin check result: $_isAdmin (role=${res?['role']})');
+    } catch (e) {
+      debugPrint('[KOK] Admin check failed: $e');
+      _isAdmin = false;
+    }
+  }
+
+  Future<void> adminDeleteArticle(String articleId) async {
+    if (!_isAdmin) return;
+    try {
+      await Supabase.instance.client
+          .from('articles')
+          .delete()
+          .eq('id', articleId);
+    } catch (_) {}
+    _articles.removeWhere((a) => a.id == articleId);
+    _commentsByArticle.remove(articleId);
+    notifyListeners();
+  }
+
+  Future<void> adminEditArticle(String articleId, Map<String, dynamic> updates) async {
+    if (!_isAdmin) return;
+    try {
+      await Supabase.instance.client
+          .from('articles')
+          .update(updates)
+          .eq('id', articleId);
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  Future<void> adminDeleteComment(String articleId, String commentId) async {
+    if (!_isAdmin) return;
+    try {
+      await Supabase.instance.client
+          .from('user_comments')
+          .delete()
+          .eq('id', commentId);
+    } catch (_) {}
+    final comments = _commentsByArticle[articleId];
+    if (comments != null) {
+      comments.removeWhere((c) => c.id == commentId);
+      notifyListeners();
+    }
+  }
+
+  // ── Articles ──
 
   Future<void> loadArticles() async {
     _isLoading = true;
     notifyListeners();
 
-    await Future.delayed(const Duration(milliseconds: 800));
-    _articles = MockData.sampleArticles;
+    try {
+      final fetched = await SupabaseService().fetchArticles();
+      if (fetched.isNotEmpty) {
+        _articles = fetched;
+      } else {
+        _articles = MockData.sampleArticles;
+      }
+    } catch (_) {
+      _articles = MockData.sampleArticles;
+    }
 
     _isLoading = false;
     notifyListeners();
@@ -106,6 +220,8 @@ class AppProvider extends ChangeNotifier {
     _selectedTags.clear();
     notifyListeners();
   }
+
+  // ── Free views / ad unlock ──
 
   bool tryViewArticle(String articleId) {
     if (_unlockedArticleIds.contains(articleId)) return true;
@@ -143,12 +259,26 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ── Comments ──
+
+  bool isMyComment(UserComment comment) {
+    final uid = _userId;
+    if (uid != null && comment.userId.isNotEmpty) {
+      return comment.userId == uid;
+    }
+    return _profile.nickname.isNotEmpty && comment.nickname == _profile.nickname;
+  }
+
   void addComment(String articleId, String content) {
     if (_profile.nickname.isEmpty) return;
+    final fandom = _profile.representativeFandom;
     final comment = UserComment(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       articleId: articleId,
+      userId: _userId ?? '',
       nickname: _profile.nickname,
+      nationality: _profile.nationality,
+      fandom: fandom,
       content: content,
       createdAt: DateTime.now(),
     );
@@ -157,14 +287,46 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  bool hasLikedComment(String commentId) => _likedCommentIds.contains(commentId);
+
   void likeComment(String articleId, String commentId) {
     final comments = _commentsByArticle[articleId];
-    if (comments != null) {
-      final comment = comments.firstWhere((c) => c.id == commentId);
-      comment.likes++;
-      notifyListeners();
+    if (comments == null) return;
+    final idx = comments.indexWhere((c) => c.id == commentId);
+    if (idx == -1) return;
+
+    if (_likedCommentIds.contains(commentId)) {
+      _likedCommentIds.remove(commentId);
+      comments[idx].likes = (comments[idx].likes - 1).clamp(0, 999999);
+    } else {
+      _likedCommentIds.add(commentId);
+      comments[idx].likes++;
     }
+    notifyListeners();
   }
+
+  void editComment(String articleId, String commentId, String newContent) {
+    final comments = _commentsByArticle[articleId];
+    if (comments == null) return;
+    final idx = comments.indexWhere((c) => c.id == commentId);
+    if (idx == -1) return;
+    if (!isMyComment(comments[idx])) return;
+    comments[idx].content = newContent;
+    comments[idx].editedAt = DateTime.now();
+    notifyListeners();
+  }
+
+  void deleteComment(String articleId, String commentId) {
+    final comments = _commentsByArticle[articleId];
+    if (comments == null) return;
+    final idx = comments.indexWhere((c) => c.id == commentId);
+    if (idx == -1) return;
+    if (!isMyComment(comments[idx]) && !_isAdmin) return;
+    comments.removeAt(idx);
+    notifyListeners();
+  }
+
+  // ── Profile ──
 
   Future<void> updateNickname(String nickname) async {
     _profile.nickname = nickname;
@@ -183,11 +345,28 @@ class AppProvider extends ChangeNotifier {
   Future<void> toggleFavoriteTag(String tag) async {
     if (_profile.favoriteTags.contains(tag)) {
       _profile.favoriteTags.remove(tag);
+      if (_profile.representativeFandom == tag) {
+        _profile.representativeFandom = '';
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('representative_fandom', '');
+      }
     } else {
       _profile.favoriteTags.add(tag);
+      if (_profile.representativeFandom.isEmpty) {
+        _profile.representativeFandom = tag;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('representative_fandom', tag);
+      }
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('favorite_tags', _profile.favoriteTags);
+    notifyListeners();
+  }
+
+  Future<void> updateRepresentativeFandom(String tag) async {
+    _profile.representativeFandom = tag;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('representative_fandom', tag);
     notifyListeners();
   }
 
