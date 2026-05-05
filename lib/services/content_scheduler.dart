@@ -22,7 +22,7 @@ class ContentScheduler {
 
   void start() {
     if (_timer != null) return;
-    debugPrint('[KOK Scheduler] Starting (check every 30min, interval=${_intervalHours}h)');
+    debugPrint('[KOK Scheduler] Started — check every 30min, generate every ${_intervalHours}h');
     _timer = Timer.periodic(const Duration(minutes: 30), (_) => _checkAndRun());
     _checkAndRun();
   }
@@ -33,23 +33,17 @@ class ContentScheduler {
   }
 
   Future<void> _checkAndRun() async {
-    if (_isRunning) {
-      debugPrint('[KOK Scheduler] Skip: already running');
-      return;
-    }
-    if (!_hasIntervalPassed()) {
-      debugPrint('[KOK Scheduler] Skip: interval not passed (last=$_lastRunAt)');
-      return;
-    }
+    if (_isRunning) return;
+    if (!_hasIntervalPassed()) return;
 
     try {
       final canRun = await _supabase.canRunPipeline();
       if (!canRun) {
-        debugPrint('[KOK Scheduler] Skip: DB says cannot run (another run active)');
+        debugPrint('[KOK Scheduler] Skip: another pipeline run is active in DB');
         return;
       }
     } catch (e) {
-      debugPrint('[KOK Scheduler] Skip: canRunPipeline error: $e');
+      debugPrint('[KOK Scheduler] canRunPipeline error: $e');
       return;
     }
 
@@ -62,23 +56,53 @@ class ContentScheduler {
   }
 
   Future<void> runPipeline() async {
-    if (_isRunning) return;
+    if (_isRunning) {
+      debugPrint('[KOK Scheduler] Pipeline already running, skipping');
+      return;
+    }
     _isRunning = true;
+    _pipeline.clearCache();
 
     String? runId;
+    final stopwatch = Stopwatch()..start();
 
     try {
-      runId = await _supabase.startPipelineRun();
+      debugPrint('[KOK] ═══════════════════════════════════');
+      debugPrint('[KOK] Pipeline START');
+      debugPrint('[KOK] ═══════════════════════════════════');
 
+      // 1) DB lock
+      runId = await _supabase.startPipelineRun();
+      debugPrint('[KOK] Pipeline run registered: $runId');
+
+      // 2) Load processed URLs
       final existingHashes = await _supabase.getProcessedHashes();
       _pipeline.loadProcessedHashes(existingHashes);
 
+      // 3) Collect from sources
+      debugPrint('[KOK] ── Collecting sources ──');
       final naverCandidates = await _collector.collectFromNaverNews();
-      final youtubeCandidates = await _collector.collectFromYouTube();
-      final allCandidates = [...naverCandidates, ...youtubeCandidates];
+      debugPrint('[KOK] Naver: ${naverCandidates.length} candidates');
 
+      final youtubeCandidates = await _collector.collectFromYouTube();
+      debugPrint('[KOK] YouTube: ${youtubeCandidates.length} candidates');
+
+      final allCandidates = [...naverCandidates, ...youtubeCandidates];
+      debugPrint('[KOK] Total candidates: ${allCandidates.length}');
+
+      if (allCandidates.isEmpty) {
+        debugPrint('[KOK] No candidates found — check API keys in .env');
+        await _supabase.completePipelineRun(runId,
+          candidatesFound: 0, articlesGenerated: 0, articlesBlocked: 0,
+          groqCalls: 0, geminiCalls: 0);
+        return;
+      }
+
+      // 4) Process through AI pipeline
+      debugPrint('[KOK] ── AI Processing ──');
       final cards = await _pipeline.processNewsBatch(allCandidates);
 
+      // 5) Mark URLs as processed
       for (final card in cards) {
         final sources = card['original_sources'] as List?;
         if (sources != null) {
@@ -86,17 +110,19 @@ class ContentScheduler {
             final s = src as Map<String, dynamic>;
             final url = s['url']?.toString() ?? '';
             if (url.isNotEmpty) {
-              await _supabase.markUrlProcessed(_pipeline.hashUrl(url), url);
+              try {
+                await _supabase.markUrlProcessed(_pipeline.hashUrl(url), url);
+              } catch (_) {}
             }
           }
         }
       }
 
-      // 7일 지난 기사 정리
+      // 6) Cleanup old articles
       await _cleanupOldArticles();
 
-      await _supabase.completePipelineRun(
-        runId,
+      // 7) Complete run
+      await _supabase.completePipelineRun(runId,
         candidatesFound: allCandidates.length,
         articlesGenerated: cards.length,
         articlesBlocked: allCandidates.length - cards.length,
@@ -105,12 +131,22 @@ class ContentScheduler {
       );
 
       _lastRunAt = DateTime.now();
-      debugPrint('[KOK] Pipeline done: ${cards.length} articles, '
-          'Groq=${_pipeline.groqCallCount}, Gemini=${_pipeline.geminiCallCount}');
-    } catch (e) {
-      debugPrint('[KOK] Pipeline failed: $e');
+      stopwatch.stop();
+
+      debugPrint('[KOK] ═══════════════════════════════════');
+      debugPrint('[KOK] Pipeline DONE in ${stopwatch.elapsed.inSeconds}s');
+      debugPrint('[KOK]   Articles: ${cards.length}');
+      debugPrint('[KOK]   Groq calls: ${_pipeline.groqCallCount}');
+      debugPrint('[KOK]   Gemini calls: ${_pipeline.geminiCallCount}');
+      debugPrint('[KOK] ═══════════════════════════════════');
+    } catch (e, st) {
+      stopwatch.stop();
+      debugPrint('[KOK] Pipeline FAILED in ${stopwatch.elapsed.inSeconds}s: $e');
+      debugPrint('[KOK] Stack: ${st.toString().split('\n').take(5).join('\n')}');
       if (runId != null) {
-        await _supabase.failPipelineRun(runId, e.toString());
+        try {
+          await _supabase.failPipelineRun(runId, e.toString());
+        } catch (_) {}
       }
     } finally {
       _isRunning = false;
@@ -121,7 +157,7 @@ class ContentScheduler {
   Future<void> _cleanupOldArticles() async {
     try {
       await _supabase.cleanupOldArticles();
-      debugPrint('[KOK] Old articles cleaned up');
+      debugPrint('[KOK] Old articles (>14 days) cleaned up');
     } catch (e) {
       debugPrint('[KOK] Cleanup failed: $e');
     }

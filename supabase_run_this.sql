@@ -148,12 +148,16 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
 
 -- 파이프라인 기사 삽입 (관리자 전용, RLS 우회)
+-- 기사 + top_reactions + source_links 한 번에 저장
 CREATE OR REPLACE FUNCTION insert_pipeline_article(article_data JSONB)
 RETURNS UUID AS $$
 DECLARE
   new_id UUID;
+  reaction JSONB;
+  src JSONB;
 BEGIN
   IF NOT is_admin() THEN RAISE EXCEPTION 'Permission denied'; END IF;
+
   INSERT INTO articles (
     issue_title_en, issue_title_es,
     what_happened_en, what_happened_es,
@@ -175,6 +179,36 @@ BEGIN
     COALESCE((article_data->>'reaction_sample_size')::INT, 0),
     COALESCE(article_data->>'safety_level', 'safe')
   ) RETURNING id INTO new_id;
+
+  -- top_reactions 삽입
+  IF article_data ? 'top_reactions' AND jsonb_typeof(article_data->'top_reactions') = 'array' THEN
+    FOR reaction IN SELECT * FROM jsonb_array_elements(article_data->'top_reactions')
+    LOOP
+      INSERT INTO top_reactions (article_id, content_en, content_es, likes, source)
+      VALUES (
+        new_id,
+        COALESCE(reaction->>'content_en', ''),
+        COALESCE(reaction->>'content_es', ''),
+        COALESCE((reaction->>'likes')::INT, 0),
+        COALESCE(reaction->>'source', '')
+      );
+    END LOOP;
+  END IF;
+
+  -- source_links 삽입
+  IF article_data ? 'original_sources' AND jsonb_typeof(article_data->'original_sources') = 'array' THEN
+    FOR src IN SELECT * FROM jsonb_array_elements(article_data->'original_sources')
+    LOOP
+      INSERT INTO source_links (article_id, title, url, type)
+      VALUES (
+        new_id,
+        COALESCE(src->>'title', ''),
+        COALESCE(src->>'url', ''),
+        COALESCE(src->>'type', 'article')
+      );
+    END LOOP;
+  END IF;
+
   RETURN new_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

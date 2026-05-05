@@ -187,12 +187,15 @@ class AppProvider extends ChangeNotifier {
 
     try {
       final fetched = await SupabaseService().fetchArticles();
+      debugPrint('[KOK] Loaded ${fetched.length} articles from Supabase');
       if (fetched.isNotEmpty) {
         _articles = fetched;
       } else {
+        debugPrint('[KOK] No articles in DB, using sample data');
         _articles = MockData.sampleArticles;
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[KOK] Article fetch failed: $e — using sample data');
       _articles = MockData.sampleArticles;
     }
 
