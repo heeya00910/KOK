@@ -353,6 +353,18 @@ CRITICAL RULES:
         card['original_sources'] = sources;
         card['safety_level'] = summary['safety_flag'];
 
+        // 이미지: 클러스터 내 YouTube 썸네일 URL 탐색 (DB에 URL만 저장)
+        String imageUrl = rep['image_url'] as String? ?? '';
+        if (imageUrl.isEmpty) {
+          for (final item in items) {
+            final url = (item as Map<String, dynamic>)['image_url'] as String? ?? '';
+            if (url.isNotEmpty) { imageUrl = url; break; }
+          }
+        }
+        if (imageUrl.isNotEmpty) {
+          card['image_url'] = imageUrl;
+        }
+
         try {
           final articleId = await _supabase.insertPipelineArticle(card);
           debugPrint('[KOK Pipeline] Saved: "${card['issue_title_en']}" (id=$articleId)');

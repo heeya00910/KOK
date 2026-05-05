@@ -404,6 +404,7 @@ class SourceCollector {
             'comments': commentData.map((c) => c['text'] as String).toList(),
             'comment_data': commentData,
             'channel': video['channelTitle'] ?? '',
+            'image_url': video['thumbnail'] ?? '',
           });
         }
       } catch (e) {
@@ -449,12 +450,15 @@ class SourceCollector {
 
     return items.map((item) {
       final snippet = item['snippet'] ?? {};
+      final thumbnails = snippet['thumbnails'] ?? {};
+      final thumb = thumbnails['high'] ?? thumbnails['medium'] ?? thumbnails['default'] ?? {};
       return <String, dynamic>{
         'videoId': item['id']?['videoId'] ?? '',
         'title': snippet['title'] ?? '',
         'description': snippet['description'] ?? '',
         'channelTitle': snippet['channelTitle'] ?? '',
         'publishedAt': snippet['publishedAt'] ?? '',
+        'thumbnail': thumb['url'] ?? '',
       };
     }).where((v) => (v['videoId'] as String).isNotEmpty).toList();
   }
