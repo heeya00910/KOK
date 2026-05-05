@@ -390,9 +390,9 @@ class SourceCollector {
 
         for (final video in videos.take(5)) {
           final videoId = video['videoId'] as String;
-          List<String> comments = [];
+          List<Map<String, dynamic>> commentData = [];
           try {
-            comments = await _fetchYouTubeComments(videoId, maxResults: 20);
+            commentData = await _fetchYouTubeComments(videoId, maxResults: 20);
           } catch (_) {}
 
           results.add({
@@ -401,7 +401,8 @@ class SourceCollector {
             'url': 'https://www.youtube.com/watch?v=$videoId',
             'source': 'youtube',
             'published_at': video['publishedAt'] ?? '',
-            'comments': comments,
+            'comments': commentData.map((c) => c['text'] as String).toList(),
+            'comment_data': commentData,
             'channel': video['channelTitle'] ?? '',
           });
         }
@@ -458,7 +459,8 @@ class SourceCollector {
     }).where((v) => (v['videoId'] as String).isNotEmpty).toList();
   }
 
-  Future<List<String>> _fetchYouTubeComments(String videoId, {int maxResults = 20}) async {
+  /// 댓글 텍스트 + 실제 좋아요 수를 함께 반환
+  Future<List<Map<String, dynamic>>> _fetchYouTubeComments(String videoId, {int maxResults = 20}) async {
     final url = Uri.parse(
       'https://www.googleapis.com/youtube/v3/commentThreads'
       '?part=snippet&videoId=$videoId'
@@ -473,9 +475,15 @@ class SourceCollector {
     final items = data['items'] as List? ?? [];
 
     return items.map((item) {
-      final comment = item['snippet']?['topLevelComment']?['snippet'];
-      return (comment?['textDisplay'] ?? '') as String;
-    }).where((t) => t.isNotEmpty).toList();
+      final snippet = item['snippet']?['topLevelComment']?['snippet'];
+      final text = (snippet?['textDisplay'] ?? '') as String;
+      final likes = (snippet?['likeCount'] ?? 0) as int;
+      return <String, dynamic>{
+        'text': text,
+        'likes': likes,
+        'source': 'YouTube',
+      };
+    }).where((c) => (c['text'] as String).isNotEmpty).toList();
   }
 
   // ═══════════════════════════════════════════

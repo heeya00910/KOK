@@ -133,9 +133,10 @@ Each array contains indices of titles that belong to the same issue. Maximum 8 c
         .map((c) => _safety.sanitizeComment(c))
         .toList();
 
-    final commentsSection = sanitizedComments.isEmpty
-        ? 'No user comments available. Analyze based on title and summary only. For key_reactions, generate 2-3 plausible Korean public reactions based on the tone and topic.'
-        : 'Top reactions (${sanitizedComments.length}):\n${sanitizedComments.join('\n')}';
+    final hasRealComments = sanitizedComments.isNotEmpty;
+    final commentsSection = hasRealComments
+        ? 'Real comments collected (${sanitizedComments.length}):\n${sanitizedComments.join('\n')}'
+        : 'No real comments collected for this article.';
 
     _groqCallCount++;
     debugPrint('[KOK Pipeline] Groq call #$_groqCallCount: "$title"');
@@ -155,9 +156,7 @@ JSON으로 출력:
   "reaction_tone": "supportive/critical/divided/amused/neutral",
   "issue_tags": ["COMEBACK"],
   "artist_tags": ["BTS"],
-  "key_reactions": [
-    {"text": "실제 한국 대중 반응을 대표하는 댓글 (한국어)", "tone": "supportive", "likes": 1234}
-  ],
+  "has_real_comments": $hasRealComments,
   "safety_flag": "safe",
   "importance_score": 7
 }
@@ -165,32 +164,35 @@ JSON으로 출력:
 규칙:
 - is_relevant: K-pop 아이돌, 소속사, 업계 뉴스면 true
 - issue_summary_ko: "왜 이게 화제인지"를 담아야 함. 단순 사실 나열 X, 맥락과 의미 포함 O
-- reaction_tone: 한국 대중 반응의 전체 분위기. supportive(응원), critical(비판), divided(찬반), amused(웃김/밈), neutral(담담)
-- key_reactions: 2~3개. 서로 다른 시각을 보여주는 반응들. 실제 댓글이 없으면 한국 커뮤니티(더쿠/인스티즈/네이버) 분위기에 맞는 현실적인 반응 생성. "ㅋㅋㅋ", "ㄷㄷ", "와..." 같은 한국식 표현 사용 OK
+- reaction_tone: 한국 대중 반응의 전체 분위기. supportive(응원), critical(비판), divided(찬반), amused(웃김/밈), neutral(담담). 실제 댓글이 없으면 뉴스 내용 기반으로 판단
 - issue_tags: COMEBACK, CHART, AWARD, AGENCY, CONTRACT, CONTROVERSY, FANDOM, MILITARY, RELATIONSHIP, LEGAL, SOCIAL_MEDIA, PERFORMANCE, COLLABORATION, BRAND_DEAL, VARIETY_SHOW, WORLD_TOUR, DEBUT, DISBANDMENT, SOLO, OST 중 선택
 - artist_tags: 뉴스에 언급된 실제 아티스트/소속사 이름
 - safety_flag: 혐오/검증안된루머/사생활침해면 "blocked", 아니면 "safe"
 - importance_score: 1~10 (10이 가장 핫한 이슈)
+- 절대로 존재하지 않는 댓글이나 반응을 만들어내지 마라. 실제 데이터만 분석해라.
 ''', maxTokens: 1024);
 
     _summaryCache[contentHash] = result;
     return result;
   }
 
-  // ── Step 5: EN/ES 카드 생성 (Gemini 우선 → Groq fallback) ──
+  // ── Step 5: EN/ES 카드 생성 (Gemini → Cerebras → Groq) ──
+  // 실제 댓글 데이터만 전달. AI가 숫자/소스를 만들어내지 않도록 함.
 
   Future<Map<String, dynamic>> generateCard({
     required String koreanSummary,
     required String reactionTone,
-    required List<Map<String, dynamic>> keyReactions,
+    required List<Map<String, dynamic>> realComments,
     required List<String> issueTags,
     required List<String> artistTags,
     required List<Map<String, String>> sources,
   }) async {
-    final reactionsStr = keyReactions
-        .take(5)
-        .map((r) => '- "${r['text']}" (${r['tone']}, ${r['likes']} likes)')
-        .join('\n');
+    // 실제 댓글을 소스/좋아요와 함께 전달
+    final hasComments = realComments.isNotEmpty;
+    final reactionsStr = hasComments
+        ? realComments.take(5).map((c) =>
+            '- "${c['text']}" (${c['likes']} likes, from ${c['source']})').join('\n')
+        : 'No real user comments were collected for this article.';
 
     final sourcesStr = sources
         .map((s) => '- ${s['title']}: ${s['url']}')
@@ -199,17 +201,16 @@ JSON으로 출력:
     _geminiCallCount++;
 
     final prompt = '''
-You are KOK's content writer — you translate the Korean K-pop conversation for international fans.
+You are KOK's content writer — you translate Korean K-pop news for international fans.
 
-Your voice: witty, sharp, insider-tone. Like a bilingual Korean friend explaining what's REALLY going on.
-NOT: robotic news reporter. NOT: clickbait youtuber.
+Voice: witty, sharp, insider-tone. Like a bilingual Korean friend explaining what's going on.
 
 ---
 
-[INPUT — Korean analysis]
+[INPUT]
 Korean Summary: $koreanSummary
 Reaction Tone: $reactionTone
-Key Korean Reactions:
+${hasComments ? 'REAL collected comments (translate these faithfully):' : 'No real comments available for this article.'}
 $reactionsStr
 Tags: ${issueTags.join(', ')}
 Artists: ${artistTags.join(', ')}
@@ -218,37 +219,33 @@ $sourcesStr
 
 ---
 
-[OUTPUT — JSON, BOTH English AND Spanish]
+[OUTPUT — JSON]
 {
-  "issue_title_en": "Headline that hooks. Sharp, clear, max 100 chars. No ALL CAPS. No clickbait.",
-  "issue_title_es": "Same energy in Spanish",
-  "what_happened_en": "The facts — what actually happened. Clear, concise, max 350 chars.",
+  "issue_title_en": "Sharp headline, max 100 chars",
+  "issue_title_es": "Spanish version",
+  "what_happened_en": "What happened, max 350 chars",
   "what_happened_es": "Spanish version",
-  "why_it_matters_en": "Why Koreans care about this. Industry/cultural significance. Max 350 chars.",
+  "why_it_matters_en": "Why Koreans care, max 350 chars",
   "why_it_matters_es": "Spanish version",
-  "korean_reaction_summary_en": "The real vibe — how Korean netizens/public are reacting. Show the spectrum of opinions. Capture the tone (sarcasm, humor, outrage, support). Max 450 chars.",
+  "korean_reaction_summary_en": "Summary of Korean public reaction based on collected data, max 450 chars",
   "korean_reaction_summary_es": "Spanish version",
-  "top_reactions": [
-    {"content_en": "Translated Korean reaction (keep the flavor — sarcasm, wit, slang)", "content_es": "Spanish", "likes": 12345, "source": "Naver"},
-    {"content_en": "A different perspective/reaction", "content_es": "Spanish", "likes": 5678, "source": "YouTube"}
-  ],
-  "context_for_fans_en": "What international fans might not know — cultural context, industry norms, why Koreans react this way. Max 400 chars.",
+  ${hasComments ? '"top_reactions": [\n    {"content_en": "Faithful translation of the real comment above", "content_es": "Spanish", "likes": EXACT_NUMBER_FROM_INPUT, "source": "EXACT_SOURCE_FROM_INPUT"}\n  ],' : '"top_reactions": [],'}
+  "context_for_fans_en": "Cultural context international fans might miss, max 400 chars",
   "context_for_fans_es": "Spanish version",
   "sentiment": "$reactionTone"
 }
 
 ---
 
-QUALITY RULES:
-1. TITLE: Would you actually tap on this? If not, rewrite it.
-2. REACTIONS: Preserve the original Korean flavor. "Koreans are saying..." is boring. Instead: capture the actual wit, sarcasm, or raw emotion.
-3. CONTEXT: This is KOK's killer feature. Explain things like military service culture, music show wins meaning, Melon chart politics, agency reputation, trainee systems — things only someone IN Korea would know.
-4. SPANISH: Not Google Translate. Natural Latin American / Spanish Gen-Z tone.
-5. top_reactions: 2-3 entries showing DIFFERENT viewpoints (fans vs general public, positive vs critical).
-6. NO: generic filler, "fans are excited", "this is big news". Be SPECIFIC.
+CRITICAL RULES:
+1. top_reactions: ONLY translate the REAL comments provided above. Use the EXACT likes count and source from the input. DO NOT invent comments, likes, or sources.
+2. If no real comments were provided, return an EMPTY top_reactions array [].
+3. Do NOT fabricate any source names (no "Twitter", "TheQoo", etc. unless they appear in the input).
+4. Title: catchy but not clickbait.
+5. context_for_fans: explain Korean cultural nuances fans might miss.
+6. Spanish: natural Latin American Gen-Z tone, not Google Translate.
 ''';
 
-    // Gemini 우선 → Groq fallback (자동 전환)
     final result = await _ai.generateCardJson(prompt, maxTokens: 2048);
 
     final titleEn = result['issue_title_en'] as String? ?? '';
@@ -331,10 +328,15 @@ QUALITY RULES:
         // Gemini rate limit 방지: 호출 간 3초 간격
         if (i > 0) await Future.delayed(const Duration(seconds: 3));
 
+        // 실제 댓글 데이터 (좋아요 수, 소스 포함) 가져오기
+        final realCommentData = List<Map<String, dynamic>>.from(
+          rep['comment_data'] ?? [],
+        );
+
         final card = await generateCard(
           koreanSummary: summary['issue_summary_ko'] as String? ?? '',
           reactionTone: summary['reaction_tone'] as String? ?? 'neutral',
-          keyReactions: List<Map<String, dynamic>>.from(summary['key_reactions'] ?? []),
+          realComments: realCommentData,
           issueTags: List<String>.from(summary['issue_tags'] ?? []),
           artistTags: List<String>.from(summary['artist_tags'] ?? []),
           sources: sources,
@@ -347,7 +349,7 @@ QUALITY RULES:
 
         card['issue_tags'] = summary['issue_tags'];
         card['artist_tags'] = summary['artist_tags'];
-        card['reaction_sample_size'] = comments.length > 0 ? comments.length * 100 : 1000;
+        card['reaction_sample_size'] = realCommentData.length;
         card['original_sources'] = sources;
         card['safety_level'] = summary['safety_flag'];
 
