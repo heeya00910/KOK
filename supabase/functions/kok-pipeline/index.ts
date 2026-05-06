@@ -447,6 +447,233 @@ async function collectYoutubeComments(videoId: string, clusterId: string): Promi
 }
 
 // ═══════════════════════════════════
+// STAGE 1.5: COLLECT REACTIONS
+// ═══════════════════════════════════
+
+async function collectReactionsForClusters(): Promise<number> {
+  const { data: clusters } = await sb.from("issue_clusters")
+    .select("*")
+    .in("status", ["candidate", "keep", "pending_more_signals", "manual_review", "new"])
+    .not("status", "eq", "published")
+    .order("trend_score", { ascending: false })
+    .limit(10);
+
+  let totalReactions = 0;
+
+  if (clusters && clusters.length > 0) {
+    for (const c of clusters) {
+      const sourceIds = (c.source_item_ids ?? []) as string[];
+      if (sourceIds.length === 0) continue;
+
+      const { data: sources } = await sb.from("raw_source_items")
+        .select("*")
+        .in("id", sourceIds);
+
+      if (!sources) continue;
+
+      for (const src of sources) {
+        if (src.source_name === "nate_pann_enttalk") {
+          totalReactions += await collectPannComments(src.url, c.id);
+          await new Promise(r => setTimeout(r, 1500));
+        } else if (src.source_name === "theqoo_square" || src.source_name === "theqoo_ktalk") {
+          totalReactions += await collectTheqooComments(src.url, c.id);
+          await new Promise(r => setTimeout(r, 1500));
+        } else if (src.source_type === "youtube" && src.external_id) {
+          totalReactions += await collectYoutubeComments(src.external_id, c.id);
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
+    }
+  }
+
+  totalReactions += await collectTopTheqooReactions();
+  return totalReactions;
+}
+
+async function collectTopTheqooReactions(): Promise<number> {
+  const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const { data: recentItems } = await sb.from("raw_source_items")
+    .select("id, url, source_name, raw_metrics, collected_at")
+    .in("source_name", ["theqoo_square", "theqoo_ktalk"])
+    .gte("collected_at", since)
+    .order("collected_at", { ascending: false })
+    .limit(50);
+
+  if (!recentItems || recentItems.length === 0) return 0;
+
+  const topItems = recentItems
+    .filter(it => {
+      if (it.url.includes("/event/")) return false;
+      const srl = it.url.match(/\/(\d+)$/)?.[1] ?? "";
+      if (parseInt(srl) < 4000000000) return false;
+      return true;
+    })
+    .map(it => ({
+      ...it,
+      commentCount: (it.raw_metrics as Record<string, number>)?.comment_count ?? 0,
+    }))
+    .filter(it => it.commentCount >= 3)
+    .sort((a, b) => b.commentCount - a.commentCount)
+    .slice(0, 10);
+
+  if (topItems.length === 0) return 0;
+
+  let total = 0;
+  for (const item of topItems) {
+    const { data: existing } = await sb.from("raw_reaction_items")
+      .select("id")
+      .eq("source_url", item.url)
+      .limit(1);
+    if (existing && existing.length > 0) continue;
+
+    total += await collectTheqooComments(item.url, item.id);
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  return total;
+}
+
+async function collectPannComments(postUrl: string, clusterId: string): Promise<number> {
+  try {
+    const html = await fetchHtml(postUrl);
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    if (!doc) return 0;
+
+    const comments = doc.querySelectorAll("dl.cmt_item");
+    let count = 0;
+
+    for (const cmt of comments) {
+      const textEl = cmt.querySelector("dd.usertxt span");
+      if (!textEl) continue;
+
+      const text = (textEl.textContent?.trim() ?? "").slice(0, 300);
+      if (text.length < 10) continue;
+
+      const ratio = hangulRatio(text);
+      if (ratio < 0.4) continue;
+
+      const likeEl = cmt.querySelector("dd.n_good");
+      const likes = parseInt(likeEl?.textContent?.replace(/[^0-9]/g, "") ?? "0");
+
+      const hash = await contentHash(`pann_cmt:${text.slice(0, 80)}`);
+
+      await sb.from("raw_reaction_items").upsert({
+        source_name: "nate_pann_enttalk",
+        source_type: "community_comment",
+        source_url: postUrl,
+        cluster_id: clusterId,
+        original_text_ko: text.slice(0, 120),
+        like_count: likes,
+        korean_ratio: ratio,
+        is_selected: likes >= 5,
+        content_hash: hash,
+      }, { onConflict: "content_hash", ignoreDuplicates: true });
+
+      count++;
+      if (count >= 15) break;
+    }
+    return count;
+  } catch (e) {
+    console.error("[pann_comments]", e);
+    return 0;
+  }
+}
+
+async function collectTheqooComments(postUrl: string, clusterId: string): Promise<number> {
+  try {
+    const docMatch = postUrl.match(/\/(\d+)$/);
+    if (!docMatch) return 0;
+    const docSrl = docMatch[1];
+    const sourceName = postUrl.includes("ktalk") ? "theqoo_ktalk" : "theqoo_square";
+
+    const body = JSON.stringify({
+      act: "dispTheqooContentCommentListTheqoo",
+      document_srl: docSrl,
+      cpage: 1,
+    });
+
+    let commentList: Array<{ ct?: string }> | null = null;
+
+    for (const attempt of [1, 2]) {
+      const apiHeaders: Record<string, string> = {
+        "User-Agent": USER_AGENT,
+        "Content-Type": "application/json; charset=utf-8",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": postUrl,
+      };
+
+      if (attempt === 2) {
+        const pageRes = await fetch(postUrl, {
+          headers: { "User-Agent": USER_AGENT, "Accept-Language": "ko-KR,ko;q=0.9" },
+        });
+        if (pageRes.ok) {
+          const pageHtml = await pageRes.text();
+          const csrfMatch = pageHtml.match(/csrf-token"\s+content="([^"]+)"/);
+          if (csrfMatch) apiHeaders["X-CSRF-Token"] = csrfMatch[1];
+          const setCookie = pageRes.headers.get("set-cookie");
+          if (setCookie) apiHeaders["Cookie"] = setCookie;
+        }
+      }
+
+      const apiRes = await fetch("https://theqoo.net/index.php", {
+        method: "POST",
+        headers: apiHeaders,
+        body,
+      });
+
+      if (!apiRes.ok) { console.error(`[theqoo_cmt] HTTP ${apiRes.status} for ${docSrl}`); continue; }
+
+      let json: Record<string, unknown>;
+      try {
+        json = await apiRes.json() as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+
+      if (json.error) { console.error(`[theqoo_cmt] error: ${json.message}`); continue; }
+
+      commentList = json.comment_list as Array<{ ct?: string }>;
+      if (Array.isArray(commentList) && commentList.length > 0) break;
+    }
+
+    if (!Array.isArray(commentList) || commentList.length === 0) return 0;
+
+    const SKIP_PATTERNS = /비회원은 작성한 지|삭제된 댓글입니다|commentWarningMessage|로그인 후에|작성자에 의해 삭제/;
+
+    let count = 0;
+    for (const cmt of commentList) {
+      const rawText = (cmt.ct ?? "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+      if (rawText.length < 5) continue;
+      if (SKIP_PATTERNS.test(rawText)) continue;
+
+      const text = rawText.slice(0, 300);
+      const ratio = hangulRatio(text);
+      if (ratio < 0.3) continue;
+
+      const hash = await contentHash(`theqoo_cmt:${text.slice(0, 80)}`);
+
+      await sb.from("raw_reaction_items").upsert({
+        source_name: sourceName,
+        source_type: "community_comment",
+        source_url: postUrl,
+        cluster_id: clusterId,
+        original_text_ko: text.slice(0, 120),
+        like_count: 0,
+        korean_ratio: ratio,
+        is_selected: true,
+        content_hash: hash,
+      }, { onConflict: "content_hash", ignoreDuplicates: true });
+
+      count++;
+      if (count >= 30) break;
+    }
+    return count;
+  } catch (e) {
+    console.error("[theqoo_comments]", e);
+    return 0;
+  }
+}
+
+// ═══════════════════════════════════
 // STAGE 2: KEYWORD EXTRACTION
 // ═══════════════════════════════════
 
@@ -511,25 +738,35 @@ async function buildClusters(): Promise<number> {
   const clusters: Record<string, Array<typeof items[0]>> = {};
 
   for (const item of items) {
-    const artists = (item.artist_tags ?? []) as string[];
-    if (artists.length === 0) continue;
-
     const noiseFlags = item.noise_flags as Record<string, number> ?? {};
     if ((noiseFlags.noise_score ?? 0) >= 70) continue;
     if ((noiseFlags.pr_score ?? 0) >= 85) continue;
 
-    const artistKey = artists.sort().join("+");
+    const artists = (item.artist_tags ?? []) as string[];
+    let groupKey: string;
+
+    if (artists.length > 0) {
+      groupKey = artists.sort().join("+");
+    } else {
+      const title = (item.title ?? "") as string;
+      const words = title
+        .replace(/[^\uAC00-\uD7AFa-zA-Z0-9\s]/g, "")
+        .split(/\s+/)
+        .filter((w: string) => w.length >= 2);
+      if (words.length < 2) continue;
+      groupKey = `_title:${words.slice(0, 3).join("+")}`;
+    }
 
     let matched = false;
     for (const existingKey of Object.keys(clusters)) {
-      const existingArtist = existingKey.split(":")[0];
-      if (existingArtist === artistKey) {
+      const existingGroup = existingKey.split(":")[0];
+      if (existingGroup === groupKey || existingGroup === groupKey.split(":")[0]) {
         clusters[existingKey].push(item);
         matched = true;
         break;
       }
     }
-    if (!matched) clusters[artistKey + ":" + item.id] = [item];
+    if (!matched) clusters[groupKey + ":" + item.id] = [item];
   }
 
   let created = 0;
@@ -1065,6 +1302,9 @@ serve(async (req) => {
       case "collect_youtube":
         result.items = await collectYoutube();
         break;
+      case "collect_reactions":
+        result.reactions = await collectReactionsForClusters();
+        break;
       case "extract_keywords":
         result.keywords = await extractKeywords();
         break;
@@ -1108,6 +1348,9 @@ serve(async (req) => {
 
         const validated = await validateWithNaver();
         result.naver_validated = validated;
+
+        const reactions = await collectReactionsForClusters();
+        result.reactions_collected = reactions;
 
         const screened = await aiScreenClusters();
         result.ai_screened = screened;

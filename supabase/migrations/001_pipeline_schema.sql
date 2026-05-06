@@ -280,31 +280,6 @@ CREATE TABLE IF NOT EXISTS ai_daily_budgets (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_budget_provider_date ON ai_daily_budgets (provider, budget_date);
 
--- ═══════════════════════════════════
--- 11. social_watchlist_accounts
--- ═══════════════════════════════════
-CREATE TABLE IF NOT EXISTS social_watchlist_accounts (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  platform TEXT NOT NULL,
-  handle TEXT NOT NULL,
-  url TEXT NOT NULL DEFAULT '',
-  is_active BOOLEAN NOT NULL DEFAULT false,
-  notes TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-INSERT INTO social_watchlist_accounts (platform, handle, url, notes) VALUES
-  ('instagram', '@idolissue', 'https://instagram.com/idolissue', 'Disabled in MVP'),
-  ('instagram', '@koreadispatch', 'https://instagram.com/koreadispatch', 'Disabled in MVP'),
-  ('instagram', '@starnewskorea', 'https://instagram.com/starnewskorea', 'Disabled in MVP'),
-  ('instagram', '@tenasia_official', 'https://instagram.com/tenasia_official', 'Disabled in MVP'),
-  ('x', '@xportsnews_02', 'https://x.com/xportsnews_02', 'Disabled in MVP'),
-  ('x', '@newsen_t', 'https://x.com/newsen_t', 'Disabled in MVP'),
-  ('x', '@newsenstar', 'https://x.com/newsenstar', 'Disabled in MVP'),
-  ('x', '@starnewskorea', 'https://x.com/starnewskorea', 'Disabled in MVP'),
-  ('x', '@xportsnews', 'https://x.com/xportsnews', 'Disabled in MVP')
-ON CONFLICT DO NOTHING;
 
 -- ═══════════════════════════════════
 -- RLS Policies

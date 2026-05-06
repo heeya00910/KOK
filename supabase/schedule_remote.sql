@@ -60,6 +60,11 @@ SELECT cron.schedule('filter_clusters_3', '30 12 * * *', $$SELECT invoke_pipelin
 SELECT cron.schedule('validate_naver_1', '0 1 * * *', $$SELECT invoke_pipeline_stage('validate_naver')$$);
 SELECT cron.schedule('validate_naver_2', '0 10 * * *', $$SELECT invoke_pipeline_stage('validate_naver')$$);
 
+-- Reactions: after filtering, before AI (3x/day)
+SELECT cron.schedule('collect_reactions_1', '40 23 * * *', $$SELECT invoke_pipeline_stage('collect_reactions')$$);
+SELECT cron.schedule('collect_reactions_2', '40 5 * * *', $$SELECT invoke_pipeline_stage('collect_reactions')$$);
+SELECT cron.schedule('collect_reactions_3', '40 12 * * *', $$SELECT invoke_pipeline_stage('collect_reactions')$$);
+
 -- Cerebras 3x/day
 SELECT cron.schedule('ai_screen_1', '0 1 * * *', $$SELECT invoke_pipeline_stage('ai_screen')$$);
 SELECT cron.schedule('ai_screen_2', '0 7 * * *', $$SELECT invoke_pipeline_stage('ai_screen')$$);
