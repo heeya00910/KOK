@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/news_article.dart';
+import '../models/kok_card.dart';
 import '../models/comment.dart';
 
 class SupabaseService {
@@ -11,7 +12,24 @@ class SupabaseService {
   String? get _userId => _client.auth.currentUser?.id;
   String? get currentUserId => _userId;
 
-  // ── Articles ──
+  // ── KOK Cards (V2 Pipeline) ──
+
+  Future<List<KokCard>> fetchKokCards({int limit = 30}) async {
+    final response = await _client
+        .from('kok_cards')
+        .select('*')
+        .eq('status', 'published')
+        .order('published_at', ascending: false)
+        .limit(limit);
+
+    return (response as List).map((json) => KokCard.fromJson(json)).toList();
+  }
+
+  Future<void> deleteKokCard(String cardId) async {
+    await _client.from('kok_cards').delete().eq('id', cardId);
+  }
+
+  // ── Legacy Articles ──
 
   Future<List<NewsArticle>> fetchArticles({
     int limit = 20,

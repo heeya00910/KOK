@@ -1,0 +1,1150 @@
+import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.38/deno-dom-wasm.ts";
+import { crypto } from "https://deno.land/std@0.177.0/crypto/mod.ts";
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const NAVER_CLIENT_ID = Deno.env.get("NAVER_CLIENT_ID") ?? "";
+const NAVER_CLIENT_SECRET = Deno.env.get("NAVER_CLIENT_SECRET") ?? "";
+const YOUTUBE_API_KEY = Deno.env.get("YOUTUBE_API_KEY") ?? "";
+const CEREBRAS_API_KEY = Deno.env.get("CEREBRAS_API_KEY") ?? "";
+const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY") ?? "";
+const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
+
+const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+const USER_AGENT = "KOK-Pipeline/2.0 (K-pop reaction curation; +https://kok.app)";
+
+// ─── Artist alias normalization ───
+const ARTIST_ALIASES: Record<string, string> = {
+  "방탄": "BTS", "방탄소년단": "BTS", "bts": "BTS",
+  "블핑": "BLACKPINK", "블랙핑크": "BLACKPINK", "blackpink": "BLACKPINK",
+  "뉴진스": "NewJeans", "newjeans": "NewJeans",
+  "에스파": "aespa", "aespa": "aespa",
+  "르세라핌": "LE SSERAFIM", "르셒": "LE SSERAFIM", "le sserafim": "LE SSERAFIM",
+  "아이브": "IVE", "ive": "IVE",
+  "세븐틴": "SEVENTEEN", "seventeen": "SEVENTEEN", "세붕": "SEVENTEEN",
+  "스트레이키즈": "Stray Kids", "스키즈": "Stray Kids", "stray kids": "Stray Kids",
+  "라이즈": "RIIZE", "riize": "RIIZE",
+  "투어스": "TWS", "tws": "TWS",
+  "엔하이픈": "ENHYPEN", "enhypen": "ENHYPEN",
+  "트와이스": "TWICE", "twice": "TWICE",
+  "있지": "ITZY", "잇지": "ITZY", "itzy": "ITZY",
+  "엔믹스": "NMIXX", "nmixx": "NMIXX",
+  "아일릿": "ILLIT", "illit": "ILLIT",
+  "투모로우바이투게더": "TXT", "투바투": "TXT", "txt": "TXT",
+  "에이티즈": "ATEEZ", "ateez": "ATEEZ",
+  "엔시티": "NCT", "nct": "NCT",
+  "엑소": "EXO", "exo": "EXO",
+  "보넥도": "BOYNEXTDOOR", "보이넥스트도어": "BOYNEXTDOOR",
+  "베이비몬스터": "BABYMONSTER", "베몬": "BABYMONSTER",
+  "트레저": "TREASURE", "treasure": "TREASURE",
+  "키스오브라이프": "KISS OF LIFE",
+  "제로베이스원": "ZEROBASEONE", "제베원": "ZEROBASEONE", "zb1": "ZEROBASEONE",
+  "아이유": "IU", "iu": "IU",
+  "지민": "Jimin", "정국": "Jung Kook", "뷔": "V", "슈가": "SUGA",
+  "리사": "Lisa", "제니": "Jennie", "로제": "Rosé", "지수": "Jisoo",
+  "레드벨벳": "Red Velvet", "아이들": "(G)I-DLE", "여자아이들": "(G)I-DLE",
+  "케플러": "Kep1er", "이즈나": "izna",
+  "캣츠아이": "KATSEYE", "하츠투하츠": "Hearts2Hearts", "미오브": "MEOVV",
+  "몬스타엑스": "MONSTA X", "몬엑": "MONSTA X",
+};
+
+const AGENCY_ALIASES: Record<string, string> = {
+  "하이브": "HYBE", "hybe": "HYBE",
+  "에스엠": "SM", "sm": "SM", "SM엔터": "SM",
+  "와이지": "YG", "yg": "YG", "YG엔터": "YG",
+  "제이와이피": "JYP", "jyp": "JYP", "JYP엔터": "JYP",
+  "어도어": "ADOR", "ador": "ADOR",
+  "빌리프랩": "BELIFT LAB",
+  "쏘스뮤직": "Source Music",
+  "플레디스": "Pledis",
+  "스타쉽": "Starship",
+  "큐브": "Cube",
+  "울림": "Woolim",
+  "카카오": "Kakao Entertainment",
+  "민희진": "Min Heejin",
+};
+
+// ─── Noise / PR patterns ───
+const PR_PATTERNS = /팝업스토어|브랜드\s?캠페인|홍보대사|광고\s?모델|앰버서더|포토월|출국|입국|공항패션|화보\s?공개|콘셉트\s?포토|컨셉포토|트랙리스트|티저\s?공개|하이라이트\s?메들리|팬사인회|생일\s?카페|굿즈\s?출시|시즌그리팅|포토카드|챌린지\s?공개|메이킹\s?공개|비하인드\s?공개|스케줄\s?공개|단순\s?출연|인증샷|컬래버|콜라보/i;
+const NOISE_PATTERNS = /컴투스|넷마블|넥슨|주가|정치|야구|축구|배구|골프|게임\s?이벤트|먹방|ASMR|언박싱|직캠|랜덤댄스|커버댄스|틱톡/i;
+const LEGAL_RISK_PATTERNS = /열애설|사생활|학폭|마약|음주운전|성추행|성폭행|도박|자살|자해/i;
+
+// ─── Utility ───
+
+async function contentHash(text: string): Promise<string> {
+  const data = new TextEncoder().encode(text);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+}
+
+function normalizeTitle(title: string): string {
+  return title
+    .replace(/<[^>]*>/g, "")
+    .replace(/&[a-z]+;/gi, "")
+    .replace(/[\[\]「」『』【】\(\)（）]/g, " ")
+    .replace(/[!?！？…·~]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function extractArtistTags(text: string): string[] {
+  const tags: Set<string> = new Set();
+  const lower = text.toLowerCase();
+  for (const [alias, canonical] of Object.entries(ARTIST_ALIASES)) {
+    if (lower.includes(alias.toLowerCase())) tags.add(canonical);
+  }
+  return [...tags];
+}
+
+function extractAgencyTags(text: string): string[] {
+  const tags: Set<string> = new Set();
+  const lower = text.toLowerCase();
+  for (const [alias, canonical] of Object.entries(AGENCY_ALIASES)) {
+    if (lower.includes(alias.toLowerCase())) tags.add(canonical);
+  }
+  return [...tags];
+}
+
+function calcPrScore(title: string): number {
+  if (PR_PATTERNS.test(title)) return 75;
+  return 10;
+}
+
+function calcNoiseScore(title: string): number {
+  if (NOISE_PATTERNS.test(title)) return 80;
+  return 10;
+}
+
+function calcLegalRisk(title: string): number {
+  if (LEGAL_RISK_PATTERNS.test(title)) return 60;
+  return 5;
+}
+
+function isHangul(ch: string): boolean {
+  const code = ch.charCodeAt(0);
+  return (code >= 0xAC00 && code <= 0xD7AF) || (code >= 0x3130 && code <= 0x318F);
+}
+
+function hangulRatio(text: string): number {
+  if (!text) return 0;
+  const chars = [...text].filter(c => c.trim());
+  if (chars.length === 0) return 0;
+  return chars.filter(c => isHangul(c)).length / chars.length;
+}
+
+// ─── Log pipeline run ───
+
+async function logRun(runType: string, meta: Record<string, unknown>) {
+  await sb.from("pipeline_runs").insert({
+    run_type: runType,
+    started_at: new Date().toISOString(),
+    finished_at: new Date().toISOString(),
+    status: meta.error ? "error" : "completed",
+    items_collected: meta.items_collected ?? 0,
+    clusters_created: meta.clusters_created ?? 0,
+    clusters_rejected: meta.clusters_rejected ?? 0,
+    cards_generated: meta.cards_generated ?? 0,
+    error_message: meta.error ?? null,
+    metadata: meta,
+  });
+}
+
+// ═══════════════════════════════════
+// STAGE 1: COLLECT SOURCES
+// ═══════════════════════════════════
+
+async function fetchHtml(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: { "User-Agent": USER_AGENT, "Accept-Language": "ko-KR,ko;q=0.9" },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  return await res.text();
+}
+
+async function collectNatePann(): Promise<number> {
+  try {
+    const html = await fetchHtml("https://pann.nate.com/talk/c20028");
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    if (!doc) return 0;
+
+    const items: Array<Record<string, unknown>> = [];
+    const posts = doc.querySelectorAll("ul.post_list li");
+
+    for (const post of posts) {
+      const titleEl = post.querySelector("h2 a");
+      if (!titleEl) continue;
+
+      const title = titleEl.textContent?.trim() ?? "";
+      if (title.length < 3) continue;
+
+      let href = titleEl.getAttribute("href") ?? "";
+      if (href.startsWith("/")) href = `https://pann.nate.com${href}`;
+      if (!href.startsWith("http")) continue;
+
+      const hash = await contentHash(`pann:${title}`);
+      const artists = extractArtistTags(title);
+      const agencies = extractAgencyTags(title);
+
+      const commentEl = post.querySelector("span.reple-num");
+      const commentCount = parseInt(commentEl?.textContent?.replace(/[^0-9]/g, "") ?? "0");
+
+      items.push({
+        source_name: "nate_pann_enttalk",
+        source_type: "community",
+        url: href,
+        title,
+        normalized_title: normalizeTitle(title),
+        raw_metrics: { comment_count: commentCount },
+        content_hash: hash,
+        artist_tags: artists,
+        agency_tags: agencies,
+        noise_flags: { pr_score: calcPrScore(title), noise_score: calcNoiseScore(title) },
+      });
+    }
+
+    if (items.length === 0) return 0;
+    const { error } = await sb.from("raw_source_items").upsert(items, { onConflict: "content_hash", ignoreDuplicates: true });
+    if (error) console.error("[collect_pann] DB error:", error.message);
+    return items.length;
+  } catch (e) {
+    console.error("[collect_pann]", e);
+    return 0;
+  }
+}
+
+async function collectTheqoo(path: string, sourceName: string): Promise<number> {
+  try {
+    const html = await fetchHtml(`https://theqoo.net/${path}`);
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    if (!doc) return 0;
+
+    const items: Array<Record<string, unknown>> = [];
+    const rows = doc.querySelectorAll(".theqoo_post_list tr, .board_list tr, table.bd_lst tr, .theqoo_board_list li, li[class*='item']");
+
+    for (const row of rows) {
+      const linkEl = row.querySelector("a[href*='/']");
+      const titleEl = row.querySelector(".title a, td.title a, .subject a, a.hx");
+      if (!titleEl) continue;
+
+      const title = titleEl.textContent?.trim() ?? "";
+      if (title.length < 5) continue;
+
+      let href = (titleEl as HTMLAnchorElement).getAttribute("href") ?? "";
+      if (href.startsWith("/")) href = `https://theqoo.net${href}`;
+      if (!href.startsWith("http")) continue;
+
+      const hash = await contentHash(`theqoo_${path}:${title}`);
+      const artists = extractArtistTags(title);
+      const agencies = extractAgencyTags(title);
+
+      const commentEl = row.querySelector(".comment_count, .replyNum, .cmt");
+
+      items.push({
+        source_name: sourceName,
+        source_type: "community",
+        url: href,
+        title,
+        normalized_title: normalizeTitle(title),
+        raw_metrics: {
+          comment_count: parseInt(commentEl?.textContent?.replace(/[^0-9]/g, "") ?? "0"),
+        },
+        content_hash: hash,
+        artist_tags: artists,
+        agency_tags: agencies,
+        noise_flags: { pr_score: calcPrScore(title), noise_score: calcNoiseScore(title) },
+      });
+    }
+
+    if (items.length === 0) return 0;
+    const { error } = await sb.from("raw_source_items").upsert(items, { onConflict: "content_hash", ignoreDuplicates: true });
+    if (error) console.error(`[collect_${path}] DB error:`, error.message);
+    return items.length;
+  } catch (e) {
+    console.error(`[collect_${path}]`, e);
+    return 0;
+  }
+}
+
+async function collectNateEnt(): Promise<number> {
+  try {
+    const html = await fetchHtml("https://news.nate.com/ent/subsection?mid=e1100");
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    if (!doc) return 0;
+
+    const items: Array<Record<string, unknown>> = [];
+
+    const mainArticles = doc.querySelectorAll("div.mlt01");
+    for (const article of mainArticles) {
+      const titleEl = article.querySelector("h2.tit");
+      const linkEl = article.querySelector("a");
+      if (!titleEl || !linkEl) continue;
+
+      const title = titleEl.textContent?.trim() ?? "";
+      if (title.length < 10) continue;
+
+      let href = linkEl.getAttribute("href") ?? "";
+      if (href.startsWith("//")) href = `https:${href}`;
+      if (href.startsWith("/")) href = `https://news.nate.com${href}`;
+      if (!href.startsWith("http")) continue;
+
+      const mediaEl = article.querySelector("span.medium");
+      const mediaName = mediaEl?.textContent?.trim() ?? "";
+
+      const hash = await contentHash(`nate_ent:${href}`);
+      const artists = extractArtistTags(title);
+
+      items.push({
+        source_name: "nate_ent",
+        source_type: "news",
+        url: href,
+        title,
+        normalized_title: normalizeTitle(title),
+        raw_metrics: { media_name: mediaName },
+        content_hash: hash,
+        artist_tags: artists,
+        agency_tags: extractAgencyTags(title),
+        noise_flags: { pr_score: calcPrScore(title), noise_score: calcNoiseScore(title) },
+      });
+    }
+
+    const listArticles = doc.querySelectorAll("ul.mduList1 li");
+    for (const li of listArticles) {
+      const linkEl = li.querySelector("h2 a");
+      if (!linkEl) continue;
+
+      const title = linkEl.textContent?.trim() ?? "";
+      if (title.length < 10) continue;
+
+      let href = linkEl.getAttribute("href") ?? "";
+      if (href.startsWith("//")) href = `https:${href}`;
+      if (href.startsWith("/")) href = `https://news.nate.com${href}`;
+      if (!href.startsWith("http")) continue;
+
+      const hash = await contentHash(`nate_ent:${href}`);
+      const artists = extractArtistTags(title);
+
+      items.push({
+        source_name: "nate_ent",
+        source_type: "news",
+        url: href,
+        title,
+        normalized_title: normalizeTitle(title),
+        content_hash: hash,
+        artist_tags: artists,
+        agency_tags: extractAgencyTags(title),
+        noise_flags: { pr_score: calcPrScore(title), noise_score: calcNoiseScore(title) },
+      });
+    }
+
+    if (items.length === 0) return 0;
+    const { error } = await sb.from("raw_source_items").upsert(items, { onConflict: "content_hash", ignoreDuplicates: true });
+    if (error) console.error("[collect_nate_ent] DB error:", error.message);
+    return items.length;
+  } catch (e) {
+    console.error("[collect_nate_ent]", e);
+    return 0;
+  }
+}
+
+const YOUTUBE_CHANNELS: Record<string, string> = {
+  "youtube_kbs_kpop": "UCwJfRJKsoksHo4RGfPCI6RA",
+  "youtube_mnet": "UCbYkiSK4z8kYl7M80PU4BQg",
+  "youtube_dispatch": "UCkxxFf4-_nIE5G-LFFbQ2gg",
+};
+
+async function collectYoutube(): Promise<number> {
+  if (!YOUTUBE_API_KEY) return 0;
+  let total = 0;
+
+  for (const [sourceName, channelId] of Object.entries(YOUTUBE_CHANNELS)) {
+    try {
+      const twoWeeksAgo = new Date(Date.now() - 14 * 86400000).toISOString();
+      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${channelId}&order=date&type=video&maxResults=10&publishedAfter=${twoWeeksAgo}&key=${YOUTUBE_API_KEY}`;
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const data = await res.json();
+
+      for (const item of data.items ?? []) {
+        const videoId = item.id?.videoId;
+        if (!videoId) continue;
+        const title = item.snippet?.title ?? "";
+        const hash = await contentHash(`yt:${videoId}`);
+        const artists = extractArtistTags(title);
+
+        const statsRes = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoId}&key=${YOUTUBE_API_KEY}`);
+        const statsData = await statsRes.json();
+        const stats = statsData.items?.[0]?.statistics ?? {};
+
+        await sb.from("raw_source_items").upsert({
+          source_name: sourceName,
+          source_type: "youtube",
+          url: `https://www.youtube.com/watch?v=${videoId}`,
+          external_id: videoId,
+          title,
+          normalized_title: normalizeTitle(title),
+          raw_metrics: {
+            view_count: parseInt(stats.viewCount ?? "0"),
+            like_count: parseInt(stats.likeCount ?? "0"),
+            comment_count: parseInt(stats.commentCount ?? "0"),
+          },
+          content_hash: hash,
+          artist_tags: artists,
+          agency_tags: extractAgencyTags(title),
+          published_at: item.snippet?.publishedAt,
+        }, { onConflict: "content_hash", ignoreDuplicates: true });
+        total++;
+      }
+    } catch (e) {
+      console.error(`[collect_youtube] ${sourceName}:`, e);
+    }
+  }
+  return total;
+}
+
+async function collectYoutubeComments(videoId: string, clusterId: string): Promise<number> {
+  if (!YOUTUBE_API_KEY) return 0;
+  try {
+    const url = `https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=${videoId}&order=relevance&maxResults=50&textFormat=plainText&key=${YOUTUBE_API_KEY}`;
+    const res = await fetch(url);
+    if (!res.ok) return 0;
+    const data = await res.json();
+    let count = 0;
+
+    for (const item of (data.items ?? []).slice(0, 50)) {
+      const snippet = item.snippet?.topLevelComment?.snippet;
+      if (!snippet) continue;
+      const text = (snippet.textDisplay ?? "").slice(0, 300);
+      const likes = snippet.likeCount ?? 0;
+
+      const ratio = hangulRatio(text);
+      if (ratio < 0.6) continue;
+      if ([...text].filter(c => isHangul(c)).length < 15) continue;
+
+      const hash = await contentHash(`ytc:${text.slice(0, 100)}`);
+
+      await sb.from("raw_reaction_items").upsert({
+        source_name: "youtube",
+        source_type: "youtube_comment",
+        source_url: `https://www.youtube.com/watch?v=${videoId}`,
+        cluster_id: clusterId,
+        original_text_ko: text.slice(0, 120),
+        like_count: likes,
+        korean_ratio: ratio,
+        content_hash: hash,
+      }, { onConflict: "content_hash", ignoreDuplicates: true });
+      count++;
+      if (count >= 20) break;
+    }
+    return count;
+  } catch (e) {
+    console.error("[collect_yt_comments]", e);
+    return 0;
+  }
+}
+
+// ═══════════════════════════════════
+// STAGE 2: KEYWORD EXTRACTION
+// ═══════════════════════════════════
+
+async function extractKeywords(): Promise<number> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: items } = await sb.from("raw_source_items")
+    .select("*")
+    .gte("collected_at", since)
+    .order("collected_at", { ascending: false });
+
+  if (!items || items.length === 0) return 0;
+
+  const keywordMap: Record<string, { count: number; sources: Set<string> }> = {};
+
+  for (const item of items) {
+    const artists = (item.artist_tags ?? []) as string[];
+    const agencies = (item.agency_tags ?? []) as string[];
+
+    for (const a of artists) {
+      if (!keywordMap[a]) keywordMap[a] = { count: 0, sources: new Set() };
+      keywordMap[a].count++;
+      keywordMap[a].sources.add(item.source_name);
+    }
+    for (const a of agencies) {
+      if (!keywordMap[a]) keywordMap[a] = { count: 0, sources: new Set() };
+      keywordMap[a].count++;
+      keywordMap[a].sources.add(item.source_name);
+    }
+  }
+
+  let inserted = 0;
+  for (const [kw, info] of Object.entries(keywordMap)) {
+    if (info.count < 2) continue;
+    await sb.from("keyword_candidates").upsert({
+      keyword: kw,
+      normalized_keyword: kw,
+      keyword_type: ARTIST_ALIASES[kw.toLowerCase()] ? "artist" : "agency",
+      source_count: info.sources.size,
+      source_names: [...info.sources],
+      mention_count: info.count,
+      last_seen_at: new Date().toISOString(),
+      trend_score: Math.min(100, info.count * 10 + info.sources.size * 15),
+    }, { onConflict: "normalized_keyword" });
+    inserted++;
+  }
+  return inserted;
+}
+
+// ═══════════════════════════════════
+// STAGE 3: ISSUE CLUSTERING
+// ═══════════════════════════════════
+
+async function buildClusters(): Promise<number> {
+  const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const { data: items } = await sb.from("raw_source_items")
+    .select("*")
+    .gte("collected_at", since)
+    .order("collected_at", { ascending: false });
+
+  if (!items || items.length === 0) return 0;
+
+  const clusters: Record<string, Array<typeof items[0]>> = {};
+
+  for (const item of items) {
+    const artists = (item.artist_tags ?? []) as string[];
+    if (artists.length === 0) continue;
+
+    const noiseFlags = item.noise_flags as Record<string, number> ?? {};
+    if ((noiseFlags.noise_score ?? 0) >= 70) continue;
+    if ((noiseFlags.pr_score ?? 0) >= 85) continue;
+
+    const artistKey = artists.sort().join("+");
+
+    let matched = false;
+    for (const existingKey of Object.keys(clusters)) {
+      const existingArtist = existingKey.split(":")[0];
+      if (existingArtist === artistKey) {
+        clusters[existingKey].push(item);
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) clusters[artistKey + ":" + item.id] = [item];
+  }
+
+  let created = 0;
+  for (const [key, clusterItems] of Object.entries(clusters)) {
+    if (clusterItems.length < 2) continue;
+
+    const allArtists = new Set<string>();
+    const allAgencies = new Set<string>();
+    const sourceTypes = new Set<string>();
+    let pannCount = 0, sqCount = 0, ktCount = 0, nateCount = 0, ytCount = 0;
+
+    for (const ci of clusterItems) {
+      for (const a of (ci.artist_tags ?? []) as string[]) allArtists.add(a);
+      for (const a of (ci.agency_tags ?? []) as string[]) allAgencies.add(a);
+      sourceTypes.add(ci.source_name);
+      if (ci.source_name === "nate_pann_enttalk") pannCount++;
+      if (ci.source_name === "theqoo_square") sqCount++;
+      if (ci.source_name === "theqoo_ktalk") ktCount++;
+      if (ci.source_name === "nate_ent") nateCount++;
+      if (ci.source_name?.startsWith("youtube")) ytCount++;
+    }
+
+    const sourceOverlap = Math.min(100, sourceTypes.size * 25);
+    const clusterKey = await contentHash(`cluster:${key}:${clusterItems.length}`);
+    const bestTitle = clusterItems.reduce((a, b) =>
+      ((a.raw_metrics as Record<string, number>)?.comment_count ?? 0) >
+      ((b.raw_metrics as Record<string, number>)?.comment_count ?? 0) ? a : b
+    ).title;
+
+    await sb.from("issue_clusters").upsert({
+      cluster_key: clusterKey,
+      main_title_ko: bestTitle,
+      main_keywords: [...allArtists],
+      related_artists: [...allArtists],
+      related_agencies: [...allAgencies],
+      source_item_ids: clusterItems.map(ci => ci.id),
+      source_count: clusterItems.length,
+      source_types: [...sourceTypes],
+      pann_post_count: pannCount,
+      theqoo_square_post_count: sqCount,
+      theqoo_ktalk_post_count: ktCount,
+      nate_article_count: nateCount,
+      youtube_video_count: ytCount,
+      cross_source_overlap: sourceOverlap,
+      noise_score: Math.max(...clusterItems.map(ci => (ci.noise_flags as Record<string, number>)?.noise_score ?? 0)),
+      pr_score: Math.max(...clusterItems.map(ci => (ci.noise_flags as Record<string, number>)?.pr_score ?? 0)),
+      legal_risk_score: Math.max(...clusterItems.map(ci => calcLegalRisk(ci.title))),
+      status: "new",
+    }, { onConflict: "cluster_key" });
+    created++;
+  }
+  return created;
+}
+
+// ═══════════════════════════════════
+// STAGE 4: DETERMINISTIC FILTERING
+// ═══════════════════════════════════
+
+async function filterClusters(): Promise<{ kept: number; rejected: number }> {
+  const { data: clusters } = await sb.from("issue_clusters")
+    .select("*")
+    .eq("status", "new")
+    .order("source_count", { ascending: false });
+
+  if (!clusters) return { kept: 0, rejected: 0 };
+
+  let kept = 0, rejected = 0;
+
+  for (const c of clusters) {
+    const sourceOverlap = c.cross_source_overlap ?? 0;
+    const prScore = c.pr_score ?? 0;
+    const noiseScore = c.noise_score ?? 0;
+    const legalRisk = c.legal_risk_score ?? 0;
+    const sourceCount = c.source_count ?? 0;
+    const artists = (c.related_artists ?? []) as string[];
+
+    let status = "candidate";
+    let reason = "";
+
+    if (noiseScore >= 75) { status = "reject"; reason = "noise_score too high"; }
+    else if (prScore >= 85) { status = "reject"; reason = "pr_score too high"; }
+    else if (legalRisk >= 70) { status = "reject"; reason = "legal_risk too high"; }
+    else if (artists.length === 0) { status = "reject"; reason = "no artist tags"; }
+    else if (sourceCount < 2 && sourceOverlap < 25) { status = "pending_more_signals"; reason = "single weak source"; }
+    else if (legalRisk >= 50) { status = "manual_review"; reason = "moderate legal risk"; }
+
+    const freshness = Math.max(0, 100 - ((Date.now() - new Date(c.first_seen_at).getTime()) / 3600000) * 4);
+
+    const trendScore =
+      sourceOverlap * 0.25 +
+      (c.datalab_growth_score ?? 0) * 0.15 +
+      freshness * 0.10 +
+      Math.min(100, sourceCount * 15) * 0.20 +
+      Math.min(100, (c.pann_post_count + c.theqoo_square_post_count) * 20) * 0.20 +
+      (c.naver_search_result_count ?? 0) * 2 * 0.10;
+
+    await sb.from("issue_clusters").update({
+      status,
+      status_reason: reason,
+      freshness,
+      trend_score: Math.min(100, trendScore),
+      updated_at: new Date().toISOString(),
+    }).eq("id", c.id);
+
+    if (status === "reject") rejected++;
+    else kept++;
+  }
+  return { kept, rejected };
+}
+
+// ═══════════════════════════════════
+// STAGE 5: NAVER VALIDATION
+// ═══════════════════════════════════
+
+async function validateWithNaver(): Promise<number> {
+  if (!NAVER_CLIENT_ID) return 0;
+
+  const { data: clusters } = await sb.from("issue_clusters")
+    .select("*")
+    .in("status", ["candidate", "pending_more_signals"])
+    .order("trend_score", { ascending: false })
+    .limit(30);
+
+  if (!clusters) return 0;
+
+  let validated = 0;
+  for (const c of clusters) {
+    const keywords = (c.main_keywords ?? []) as string[];
+    if (keywords.length === 0) continue;
+
+    const query = keywords.slice(0, 2).join(" ");
+    try {
+      const url = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(query)}&display=10&sort=date`;
+      const res = await fetch(url, {
+        headers: {
+          "X-Naver-Client-Id": NAVER_CLIENT_ID,
+          "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+        },
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const resultCount = data.items?.length ?? 0;
+
+      let naverScore = 0;
+      if (resultCount >= 5) naverScore = 85;
+      else if (resultCount >= 3) naverScore = 70;
+      else if (resultCount >= 1) naverScore = 50;
+
+      for (const item of (data.items ?? []).slice(0, 5)) {
+        const hash = await contentHash(`naver:${item.link}`);
+        await sb.from("raw_source_items").upsert({
+          source_name: "naver_search",
+          source_type: "api",
+          url: item.originallink ?? item.link,
+          title: (item.title ?? "").replace(/<[^>]*>/g, ""),
+          normalized_title: normalizeTitle(item.title ?? ""),
+          snippet: (item.description ?? "").replace(/<[^>]*>/g, "").slice(0, 200),
+          content_hash: hash,
+          artist_tags: extractArtistTags(item.title ?? ""),
+          ttl_expires_at: new Date(Date.now() + 7 * 86400000).toISOString(),
+        }, { onConflict: "content_hash", ignoreDuplicates: true });
+      }
+
+      await sb.from("issue_clusters").update({
+        naver_search_result_count: resultCount,
+        issue_clarity_score: naverScore,
+        updated_at: new Date().toISOString(),
+      }).eq("id", c.id);
+
+      validated++;
+      await new Promise(r => setTimeout(r, 500));
+    } catch (e) {
+      console.error("[naver_validate]", e);
+    }
+  }
+  return validated;
+}
+
+// ═══════════════════════════════════
+// STAGE 6: AI SCREENING (Cerebras)
+// ═══════════════════════════════════
+
+async function aiScreenClusters(): Promise<number> {
+  const { data: budget } = await sb.rpc("check_ai_budget", { p_provider: "cerebras" });
+  if (!budget) return 0;
+
+  const { data: clusters } = await sb.from("issue_clusters")
+    .select("*")
+    .in("status", ["candidate", "pending_more_signals"])
+    .gte("trend_score", 20)
+    .order("trend_score", { ascending: false })
+    .limit(30);
+
+  if (!clusters || clusters.length === 0) return 0;
+
+  let screened = 0;
+  for (const c of clusters) {
+    const prompt = `You are a Korean entertainment editor for a global K-pop fan app. Evaluate this issue cluster.
+
+Title: ${c.main_title_ko}
+Artists: ${(c.related_artists ?? []).join(", ")}
+Sources: ${c.source_count} from ${(c.source_types ?? []).join(", ")}
+Pann posts: ${c.pann_post_count}, TheQoo: ${c.theqoo_square_post_count}
+
+Is this a real Korean-local K-pop issue worth showing to global fans?
+Is this just promotional/generic content?
+
+Return JSON only:
+{"keep_candidate":bool,"is_kpop_relevant":bool,"is_generic_pr":bool,"noise_score":0-100,"pr_score":0-100,"issue_clarity_score":0-100,"recommended_status":"keep|manual_review|reject","reasoning_brief":"..."}`;
+
+    try {
+      const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${CEREBRAS_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "llama3.1-8b",
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 500,
+          response_format: { type: "json_object" },
+        }),
+      });
+
+      if (!res.ok) {
+        console.error(`[cerebras] ${res.status}`);
+        continue;
+      }
+
+      const data = await res.json();
+      const content = data.choices?.[0]?.message?.content ?? "{}";
+      const review = JSON.parse(content);
+
+      await sb.from("issue_clusters").update({
+        status: review.recommended_status ?? "reject",
+        status_reason: review.reasoning_brief ?? "",
+        noise_score: review.noise_score ?? c.noise_score,
+        pr_score: review.pr_score ?? c.pr_score,
+        issue_clarity_score: review.issue_clarity_score ?? c.issue_clarity_score,
+        ai_review_json: { cerebras: review },
+        updated_at: new Date().toISOString(),
+      }).eq("id", c.id);
+
+      await sb.rpc("increment_ai_usage", { p_provider: "cerebras", p_tokens: 600 });
+      await sb.from("ai_usage_logs").insert({
+        provider: "cerebras",
+        model: "llama3.1-8b",
+        run_type: "screen_candidate",
+        cluster_id: c.id,
+        input_tokens_estimated: 400,
+        output_tokens_estimated: 200,
+        total_tokens_estimated: 600,
+        success: true,
+      });
+
+      screened++;
+      await new Promise(r => setTimeout(r, 1000));
+    } catch (e) {
+      console.error("[cerebras_screen]", e);
+    }
+  }
+  return screened;
+}
+
+// ═══════════════════════════════════
+// STAGE 7: AI REACTION ANALYSIS (Groq)
+// ═══════════════════════════════════
+
+async function aiAnalyzeReactions(): Promise<number> {
+  const { data: budget } = await sb.rpc("check_ai_budget", { p_provider: "groq" });
+  if (!budget) return 0;
+
+  const { data: clusters } = await sb.from("issue_clusters")
+    .select("*")
+    .in("status", ["keep", "candidate"])
+    .gte("trend_score", 15)
+    .order("trend_score", { ascending: false })
+    .limit(20);
+
+  if (!clusters || clusters.length === 0) return 0;
+
+  let analyzed = 0;
+  for (const c of clusters) {
+    const { data: reactions } = await sb.from("raw_reaction_items")
+      .select("original_text_ko, like_count, source_name")
+      .eq("cluster_id", c.id)
+      .order("like_count", { ascending: false })
+      .limit(10);
+
+    const reactionText = (reactions ?? [])
+      .map(r => `[${r.source_name}/${r.like_count}likes] ${r.original_text_ko}`)
+      .join("\n");
+
+    const prompt = `You are analyzing Korean community reactions for a K-pop issue.
+
+Issue: ${c.main_title_ko}
+Artists: ${(c.related_artists ?? []).join(", ")}
+
+Korean reactions:
+${reactionText || "(No reactions collected yet - evaluate based on community signal strength)"}
+
+Community signals: Pann ${c.pann_post_count} posts, TheQoo ${c.theqoo_square_post_count} posts
+
+Evaluate reaction quality for global K-pop fans.
+
+Return JSON only:
+{"reaction_strength":0-100,"korean_context_value":0-100,"legal_risk_score":0-100,"has_meaningful_korean_reaction":bool,"main_reaction_themes":["..."],"publish_recommendation":"ready_for_generation|manual_review|reject","reasoning_brief":"..."}`;
+
+    try {
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 600,
+          response_format: { type: "json_object" },
+        }),
+      });
+
+      if (!res.ok) continue;
+      const data = await res.json();
+      const review = JSON.parse(data.choices?.[0]?.message?.content ?? "{}");
+
+      const publishScore =
+        (review.reaction_strength ?? 0) * 0.30 +
+        (c.cross_source_overlap ?? 0) * 0.15 +
+        (c.issue_clarity_score ?? 0) * 0.15 +
+        (review.korean_context_value ?? 0) * 0.15 +
+        (c.naver_search_result_count ?? 0) * 2 * 0.10 +
+        (c.datalab_growth_score ?? 0) * 0.05 +
+        (c.freshness ?? 0) * 0.05 -
+        (c.pr_score ?? 0) * 0.15 -
+        (c.noise_score ?? 0) * 0.15 -
+        (review.legal_risk_score ?? 0) * 0.20;
+
+      await sb.from("issue_clusters").update({
+        reaction_strength: review.reaction_strength ?? 0,
+        korean_context_value: review.korean_context_value ?? 0,
+        legal_risk_score: review.legal_risk_score ?? c.legal_risk_score,
+        publish_score: Math.max(0, Math.min(100, publishScore)),
+        status: review.publish_recommendation ?? "manual_review",
+        ai_review_json: { ...((c.ai_review_json as Record<string, unknown>) ?? {}), groq: review },
+        updated_at: new Date().toISOString(),
+      }).eq("id", c.id);
+
+      await sb.rpc("increment_ai_usage", { p_provider: "groq", p_tokens: 800 });
+      analyzed++;
+      await new Promise(r => setTimeout(r, 1500));
+    } catch (e) {
+      console.error("[groq_analyze]", e);
+    }
+  }
+  return analyzed;
+}
+
+// ═══════════════════════════════════
+// STAGE 8: CARD GENERATION (Gemini)
+// ═══════════════════════════════════
+
+async function generateCards(): Promise<number> {
+  const { data: budget } = await sb.rpc("check_ai_budget", { p_provider: "gemini" });
+  if (!budget) return 0;
+
+  const { data: clusters } = await sb.from("issue_clusters")
+    .select("*")
+    .in("status", ["ready_for_generation", "keep"])
+    .gte("publish_score", 30)
+    .lt("legal_risk_score", 70)
+    .order("publish_score", { ascending: false });
+
+  if (!clusters || clusters.length === 0) return 0;
+
+  let generated = 0;
+  for (const c of clusters) {
+    const { data: sources } = await sb.from("raw_source_items")
+      .select("url, title, source_name")
+      .in("id", (c.source_item_ids ?? []) as string[])
+      .limit(5);
+
+    const { data: reactions } = await sb.from("raw_reaction_items")
+      .select("original_text_ko, like_count, source_name")
+      .eq("cluster_id", c.id)
+      .eq("is_selected", true)
+      .order("like_count", { ascending: false })
+      .limit(10);
+
+    const groqReview = (c.ai_review_json as Record<string, unknown>)?.groq as Record<string, unknown> ?? {};
+
+    const sourceList = (sources ?? []).map(s => `- [${s.source_name}] ${s.title}\n  ${s.url}`).join("\n");
+    const reactionList = (reactions ?? []).map(r => `- [${r.like_count} likes] ${r.original_text_ko}`).join("\n");
+
+    const prompt = `You are the editorial writer for KOK, a K-pop reaction curation app for global fans.
+
+Generate a KOK card in English and Spanish.
+
+ISSUE: ${c.main_title_ko}
+ARTISTS: ${(c.related_artists ?? []).join(", ")}
+REACTION THEMES: ${(groqReview.main_reaction_themes as string[] ?? []).join(", ")}
+
+SOURCES:
+${sourceList || "(community sources)"}
+
+KOREAN REACTIONS (paraphrase, do not copy):
+${reactionList || "(based on community discussion volume)"}
+
+RULES:
+- Paraphrase all reactions. Never copy raw comments.
+- Use safe framing: "Some Korean users felt...", "A common reaction was..."
+- Never say "Koreans are angry" or "Everyone is criticizing"
+- No defamation, no rumor amplification, no exaggeration
+- Make it feel like polished Korean-local reaction curation
+- Concise, trendy, vivid but careful tone
+
+Return JSON only:
+{
+  "title_en":"...",
+  "title_es":"...",
+  "what_people_are_talking_about_en":"...(1-2 sentences)...",
+  "what_people_are_talking_about_es":"...",
+  "what_happened_en":"...(2-3 sentences, facts only)...",
+  "what_happened_es":"...",
+  "korean_reaction_summary_en":"...(3-5 sentences, vivid paraphrased reactions)...",
+  "korean_reaction_summary_es":"...",
+  "context_for_global_fans_en":"...(1-2 sentences, why this matters)...",
+  "context_for_global_fans_es":"...",
+  "representative_reactions_en":["paraphrased reaction 1","..."],
+  "representative_reactions_es":["..."],
+  "tags":["artist1","topic"],
+  "issue_type":"PERFORMANCE_REACTION|COMEBACK_REACTION|STYLE_REACTION|AGENCY_ISSUE|CONTROVERSY|CONTRACT_LEGAL|PUBLIC_IMAGE|CONTENT_REACTION|OTHER",
+  "reaction_tone":"supportive|critical|divided|amused|mixed",
+  "risk_level":"low|medium"
+}`;
+
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: 1200, temperature: 0.7 },
+        }),
+      });
+
+      if (!res.ok) {
+        console.error(`[gemini] ${res.status}`);
+        continue;
+      }
+
+      const data = await res.json();
+      let text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      text = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+      const card = JSON.parse(text);
+
+      const sourceLinks = (sources ?? []).map(s => ({ title: s.title, url: s.url, source: s.source_name }));
+
+      await sb.from("kok_cards").insert({
+        cluster_id: c.id,
+        title_en: card.title_en ?? "",
+        title_es: card.title_es ?? "",
+        what_people_are_talking_about_en: card.what_people_are_talking_about_en ?? "",
+        what_people_are_talking_about_es: card.what_people_are_talking_about_es ?? "",
+        what_happened_en: card.what_happened_en ?? "",
+        what_happened_es: card.what_happened_es ?? "",
+        korean_reaction_summary_en: card.korean_reaction_summary_en ?? "",
+        korean_reaction_summary_es: card.korean_reaction_summary_es ?? "",
+        context_for_global_fans_en: card.context_for_global_fans_en ?? "",
+        context_for_global_fans_es: card.context_for_global_fans_es ?? "",
+        representative_reactions_en: card.representative_reactions_en ?? [],
+        representative_reactions_es: card.representative_reactions_es ?? [],
+        source_links: sourceLinks,
+        reaction_sources: [...new Set((reactions ?? []).map(r => r.source_name))],
+        tags: card.tags ?? (c.related_artists ?? []),
+        issue_type: card.issue_type ?? "OTHER",
+        reaction_tone: card.reaction_tone ?? "mixed",
+        risk_level: card.risk_level ?? "low",
+        status: "published",
+        published_at: new Date().toISOString(),
+        prompt_version: "v2.0",
+        model_versions: { cerebras: "llama3.1-8b", groq: "llama-3.3-70b", gemini: "gemini-2.0-flash-lite" },
+      });
+
+      await sb.from("issue_clusters").update({
+        status: "published",
+        updated_at: new Date().toISOString(),
+      }).eq("id", c.id);
+
+      await sb.rpc("increment_ai_usage", { p_provider: "gemini", p_tokens: 1500 });
+      generated++;
+      await new Promise(r => setTimeout(r, 2000));
+    } catch (e) {
+      console.error("[gemini_generate]", e);
+    }
+  }
+  return generated;
+}
+
+// ═══════════════════════════════════
+// MAIN HANDLER
+// ═══════════════════════════════════
+
+serve(async (req) => {
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  };
+
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  try {
+    const { stage } = await req.json().catch(() => ({ stage: "full" }));
+    const result: Record<string, unknown> = { stage, started_at: new Date().toISOString() };
+
+    switch (stage) {
+      case "collect_pann":
+        result.items = await collectNatePann();
+        break;
+      case "collect_theqoo_square":
+        result.items = await collectTheqoo("square", "theqoo_square");
+        break;
+      case "collect_theqoo_ktalk":
+        result.items = await collectTheqoo("ktalk", "theqoo_ktalk");
+        break;
+      case "collect_nate_ent":
+        result.items = await collectNateEnt();
+        break;
+      case "collect_youtube":
+        result.items = await collectYoutube();
+        break;
+      case "extract_keywords":
+        result.keywords = await extractKeywords();
+        break;
+      case "build_clusters":
+        result.clusters = await buildClusters();
+        break;
+      case "filter_clusters":
+        result.filter = await filterClusters();
+        break;
+      case "validate_naver":
+        result.validated = await validateWithNaver();
+        break;
+      case "ai_screen":
+        result.screened = await aiScreenClusters();
+        break;
+      case "ai_analyze":
+        result.analyzed = await aiAnalyzeReactions();
+        break;
+      case "ai_generate":
+        result.generated = await generateCards();
+        break;
+      case "cleanup":
+        await sb.rpc("cleanup_expired_data");
+        result.cleaned = true;
+        break;
+      case "full": {
+        const pannItems = await collectNatePann();
+        const sqItems = await collectTheqoo("square", "theqoo_square");
+        const ktItems = await collectTheqoo("ktalk", "theqoo_ktalk");
+        const nateItems = await collectNateEnt();
+        result.collected = { pann: pannItems, theqoo_sq: sqItems, theqoo_kt: ktItems, nate: nateItems };
+
+        const kw = await extractKeywords();
+        result.keywords = kw;
+
+        const clusters = await buildClusters();
+        result.clusters_built = clusters;
+
+        const filter = await filterClusters();
+        result.filter = filter;
+
+        const validated = await validateWithNaver();
+        result.naver_validated = validated;
+
+        const screened = await aiScreenClusters();
+        result.ai_screened = screened;
+
+        const analyzed = await aiAnalyzeReactions();
+        result.ai_analyzed = analyzed;
+
+        const generated = await generateCards();
+        result.cards_generated = generated;
+
+        await sb.rpc("cleanup_expired_data");
+
+        await logRun("full_pipeline", {
+          items_collected: pannItems + sqItems + ktItems + nateItems,
+          clusters_created: clusters,
+          clusters_rejected: filter.rejected,
+          cards_generated: generated,
+        });
+        break;
+      }
+      default:
+        return new Response(JSON.stringify({ error: `Unknown stage: ${stage}` }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+    }
+
+    result.finished_at = new Date().toISOString();
+    return new Response(JSON.stringify(result), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("[pipeline]", msg);
+    return new Response(JSON.stringify({ error: msg }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+});
