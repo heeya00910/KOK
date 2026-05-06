@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -174,8 +175,10 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
                           ),
                         ),
                       ),
-                    _buildAppleButton(),
-                    const SizedBox(height: 12),
+                    if (Platform.isIOS) ...[
+                      _buildAppleButton(),
+                      const SizedBox(height: 12),
+                    ],
                     _buildGoogleButton(),
                     const SizedBox(height: 28),
                     Row(
