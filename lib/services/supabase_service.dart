@@ -9,6 +9,7 @@ class SupabaseService {
 
   SupabaseClient get _client => Supabase.instance.client;
   String? get _userId => _client.auth.currentUser?.id;
+  String? get currentUserId => _userId;
 
   // ── Articles ──
 
@@ -256,5 +257,75 @@ class SupabaseService {
   Future<Set<String>> getProcessedHashes() async {
     final res = await _client.from('processed_urls').select('url_hash');
     return (res as List).map((r) => r['url_hash'] as String).toSet();
+  }
+
+  // ── Chart ──
+
+  Future<List<Map<String, dynamic>>> getWeeklyChart() async {
+    final res = await _client.rpc('get_weekly_chart');
+    return List<Map<String, dynamic>>.from(res as List);
+  }
+
+  Future<int> getTodayVoteCount() async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return 999;
+    final res = await _client.rpc('get_today_vote_count', params: {'p_user_id': userId});
+    return (res as int?) ?? 0;
+  }
+
+  Future<bool> castVote(String artistName, {int maxVotes = 1}) async {
+    final res = await _client.rpc('cast_chart_vote', params: {
+      'p_artist_name': artistName,
+      'p_max_votes': maxVotes,
+    });
+    return res == true;
+  }
+
+  // ── Artist Chat ──
+
+  Future<List<Map<String, dynamic>>> getArtistChats(String artistName, {int limit = 100}) async {
+    final res = await _client
+        .from('artist_chats')
+        .select()
+        .eq('artist_name', artistName)
+        .order('created_at', ascending: false)
+        .limit(limit);
+    return List<Map<String, dynamic>>.from(res as List);
+  }
+
+  Future<void> sendArtistChat({
+    required String artistName,
+    required String nickname,
+    required String message,
+    String nationality = '',
+    String fandom = '',
+  }) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('Not logged in');
+    await _client.from('artist_chats').insert({
+      'artist_name': artistName,
+      'user_id': userId,
+      'nickname': nickname,
+      'nationality': nationality,
+      'fandom': fandom,
+      'message': message,
+    });
+  }
+
+  Future<void> updateArtistChat({
+    required String chatId,
+    required String newMessage,
+  }) async {
+    await _client.from('artist_chats')
+        .update({'message': newMessage})
+        .eq('id', chatId);
+  }
+
+  Future<void> deleteArtistChat(String chatId) async {
+    await _client.from('artist_chats').delete().eq('id', chatId);
+  }
+
+  Future<void> cleanupOldChats() async {
+    await _client.rpc('cleanup_old_chats');
   }
 }

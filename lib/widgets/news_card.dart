@@ -60,28 +60,26 @@ class NewsCard extends StatelessWidget {
   }
 
   Widget _buildImage() {
+    final hasImage = article.imageUrl.isNotEmpty && article.imageUrl.startsWith('http');
+
     return Stack(
       children: [
         ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-          child: CachedNetworkImage(
-            imageUrl: article.imageUrl,
-            height: 180,
-            width: double.infinity,
-            fit: BoxFit.cover,
-            placeholder: (_, __) => Shimmer.fromColors(
-              baseColor: KokColors.surfaceLight,
-              highlightColor: KokColors.surface,
-              child: Container(height: 180, color: KokColors.surfaceLight),
-            ),
-            errorWidget: (_, __, ___) => Container(
-              height: 180,
-              color: KokColors.surfaceLight,
-              child: const Center(
-                child: Icon(Icons.music_note_rounded, color: KokColors.textMuted, size: 40),
-              ),
-            ),
-          ),
+          child: hasImage
+              ? CachedNetworkImage(
+                  imageUrl: article.imageUrl,
+                  height: 180,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => Shimmer.fromColors(
+                    baseColor: KokColors.surfaceLight,
+                    highlightColor: KokColors.surface,
+                    child: Container(height: 180, color: KokColors.surfaceLight),
+                  ),
+                  errorWidget: (_, __, ___) => _buildFallbackImage(),
+                )
+              : _buildFallbackImage(),
         ),
         if (isLocked)
           Positioned.fill(
@@ -154,8 +152,64 @@ class NewsCard extends StatelessWidget {
     );
   }
 
+  Widget _buildFallbackImage() {
+    return Container(
+      height: 180,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            KokColors.primary.withAlpha(40),
+            KokColors.surface,
+            KokColors.accent.withAlpha(30),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.music_note_rounded, color: KokColors.primary.withAlpha(80), size: 36),
+            const SizedBox(height: 6),
+            Text(
+              article.artistTags.isNotEmpty ? article.artistTags.first : 'K-POP',
+              style: TextStyle(
+                color: KokColors.textMuted.withAlpha(150),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildReactionPreview(String lang) {
-    if (article.topReactions.isEmpty) return const SizedBox.shrink();
+    if (article.topReactions.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: KokColors.surfaceLight,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: KokColors.border, width: 0.5),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.chat_bubble_outline_rounded, size: 16, color: KokColors.textMuted.withAlpha(120)),
+            const SizedBox(width: 8),
+            Text(
+              lang == 'es' ? 'Resumen de la reaccion coreana en el interior' : 'Korean reaction summary inside',
+              style: TextStyle(fontSize: 12, color: KokColors.textMuted.withAlpha(150), fontStyle: FontStyle.italic),
+            ),
+          ],
+        ),
+      );
+    }
+
     final reaction = article.topReactions.first;
     return Container(
       padding: const EdgeInsets.all(10),
@@ -194,18 +248,21 @@ class NewsCard extends StatelessWidget {
 
   Widget _buildFooter(String lang) {
     final timeAgo = _formatTimeAgo(article.publishedAt);
-    final sampleText = lang == 'es' ? 'reacciones' : 'reactions';
 
     return Row(
       children: [
         const Icon(Icons.schedule_rounded, size: 14, color: KokColors.textMuted),
         const SizedBox(width: 4),
         Text(timeAgo, style: const TextStyle(fontSize: 12, color: KokColors.textMuted)),
-        const SizedBox(width: 16),
-        const Icon(Icons.forum_outlined, size: 14, color: KokColors.textMuted),
-        const SizedBox(width: 4),
-        Text('${_formatNumber(article.reactionSampleSize)}+ $sampleText',
-            style: const TextStyle(fontSize: 12, color: KokColors.textMuted)),
+        if (article.reactionSampleSize > 0) ...[
+          const SizedBox(width: 16),
+          const Icon(Icons.source_outlined, size: 14, color: KokColors.textMuted),
+          const SizedBox(width: 4),
+          Text(
+            '${article.reactionSampleSize} ${lang == 'es' ? 'fuentes' : 'sources'}',
+            style: const TextStyle(fontSize: 12, color: KokColors.textMuted),
+          ),
+        ],
         const Spacer(),
         Icon(Icons.arrow_forward_ios_rounded, size: 14, color: KokColors.textMuted.withAlpha(100)),
       ],
@@ -234,9 +291,10 @@ class _SentimentBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (icon, color, label) = switch (sentiment) {
-      'positive' => (Icons.trending_up_rounded, KokColors.success, 'Positive'),
-      'negative' => (Icons.trending_down_rounded, KokColors.error, 'Critical'),
-      'mixed' => (Icons.swap_vert_rounded, KokColors.warning, 'Divided'),
+      'positive' || 'supportive' => (Icons.trending_up_rounded, KokColors.success, 'Supportive'),
+      'negative' || 'critical' => (Icons.trending_down_rounded, KokColors.error, 'Critical'),
+      'mixed' || 'divided' => (Icons.swap_vert_rounded, KokColors.warning, 'Divided'),
+      'amused' => (Icons.sentiment_very_satisfied_rounded, const Color(0xFFFFB74D), 'Amused'),
       _ => (Icons.horizontal_rule_rounded, KokColors.textMuted, 'Neutral'),
     };
 

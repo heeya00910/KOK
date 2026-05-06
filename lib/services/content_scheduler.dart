@@ -24,7 +24,7 @@ class ContentScheduler {
     if (_timer != null) return;
     debugPrint('[KOK Scheduler] Started — check every 30min, generate every ${_intervalHours}h');
     _timer = Timer.periodic(const Duration(minutes: 30), (_) => _checkAndRun());
-    _checkAndRun();
+    // 로그인 시 즉시 실행하지 않음 — 주기에 맞춰서만 자동 실행
   }
 
   void stop() {
@@ -75,9 +75,17 @@ class ContentScheduler {
       runId = await _supabase.startPipelineRun();
       debugPrint('[KOK] Pipeline run registered: $runId');
 
-      // 2) Load processed URLs
+      // 2) Load processed URLs + chart bonus
       final existingHashes = await _supabase.getProcessedHashes();
       _pipeline.loadProcessedHashes(existingHashes);
+
+      try {
+        final chartData = await _supabase.getWeeklyChart();
+        SourceCollector.loadChartBonus(chartData);
+        debugPrint('[KOK] Chart bonus loaded: ${chartData.length} artists');
+      } catch (e) {
+        debugPrint('[KOK] Chart bonus load skipped: $e');
+      }
 
       // 3) Collect from sources
       debugPrint('[KOK] ── Collecting sources ──');

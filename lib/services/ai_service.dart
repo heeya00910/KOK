@@ -26,8 +26,21 @@ class AiService {
   //  Groq — 분석/요약 주력
   // ═══════════════════════════════════════════
 
-  Future<String> callGroq(String prompt, {int maxTokens = 1024}) async {
+  Future<String> callGroq(String prompt, {int maxTokens = 1024, bool jsonMode = false}) async {
     _checkCooldown(_groqCooldown, 'Groq');
+
+    final body = <String, dynamic>{
+      'model': 'llama-3.3-70b-versatile',
+      'messages': [
+        {'role': 'system', 'content': 'You are a K-pop news analyst. Be concise and factual. Respond in the exact format requested.'},
+        {'role': 'user', 'content': prompt},
+      ],
+      'temperature': 0.3,
+      'max_tokens': maxTokens,
+    };
+    if (jsonMode) {
+      body['response_format'] = {'type': 'json_object'};
+    }
 
     final response = await http.post(
       Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
@@ -35,15 +48,7 @@ class AiService {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $_groqKey',
       },
-      body: jsonEncode({
-        'model': 'llama-3.3-70b-versatile',
-        'messages': [
-          {'role': 'system', 'content': 'You are a K-pop news analyst. Be concise and factual. Respond in the exact format requested.'},
-          {'role': 'user', 'content': prompt},
-        ],
-        'temperature': 0.3,
-        'max_tokens': maxTokens,
-      }),
+      body: jsonEncode(body),
     );
 
     if (response.statusCode == 429) {
@@ -59,7 +64,7 @@ class AiService {
   }
 
   Future<Map<String, dynamic>> callGroqJson(String prompt, {int maxTokens = 1024}) async {
-    final raw = await callGroq('$prompt\n\nRespond ONLY with valid JSON.', maxTokens: maxTokens);
+    final raw = await callGroq(prompt, maxTokens: maxTokens, jsonMode: true);
     return _parseJson(raw);
   }
 
@@ -67,8 +72,21 @@ class AiService {
   //  Cerebras — 일일 한도 무제한, Groq와 같은 모델
   // ═══════════════════════════════════════════
 
-  Future<String> callCerebras(String prompt, {int maxTokens = 2048}) async {
+  Future<String> callCerebras(String prompt, {int maxTokens = 2048, bool jsonMode = false}) async {
     _checkCooldown(_cerebrasCooldown, 'Cerebras');
+
+    final body = <String, dynamic>{
+      'model': 'llama3.1-8b',
+      'messages': [
+        {'role': 'system', 'content': 'You are a K-pop content writer. Be creative, witty, and culturally accurate. Respond in the exact format requested.'},
+        {'role': 'user', 'content': prompt},
+      ],
+      'temperature': 0.7,
+      'max_tokens': maxTokens,
+    };
+    if (jsonMode) {
+      body['response_format'] = {'type': 'json_object'};
+    }
 
     final response = await http.post(
       Uri.parse('https://api.cerebras.ai/v1/chat/completions'),
@@ -76,15 +94,7 @@ class AiService {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $_cerebrasKey',
       },
-      body: jsonEncode({
-        'model': 'llama3.1-8b',
-        'messages': [
-          {'role': 'system', 'content': 'You are a K-pop content writer. Be creative, witty, and culturally accurate. Respond in the exact format requested.'},
-          {'role': 'user', 'content': prompt},
-        ],
-        'temperature': 0.7,
-        'max_tokens': maxTokens,
-      }),
+      body: jsonEncode(body),
     );
 
     if (response.statusCode == 429) {
@@ -100,8 +110,8 @@ class AiService {
   }
 
   Future<Map<String, dynamic>> callCerebrasJson(String prompt, {int maxTokens = 2048}) async {
-    final raw = await callCerebras('$prompt\n\nRespond ONLY with valid JSON, no markdown fences.', maxTokens: maxTokens);
-    return _parseJson(raw);
+    final raw = await callCerebras(prompt, maxTokens: maxTokens, jsonMode: true);
+    return jsonDecode(raw) as Map<String, dynamic>;
   }
 
   // ═══════════════════════════════════════════
@@ -175,7 +185,7 @@ class AiService {
     } on RateLimitException {
       debugPrint('[KOK AI] Cerebras limited → Groq');
     } catch (e) {
-      debugPrint('[KOK AI] Cerebras failed → Groq');
+      debugPrint('[KOK AI] Cerebras failed: $e → Groq');
     }
 
     // 3차: Groq (최후 보루)

@@ -342,3 +342,128 @@ DO $$ BEGIN
     CREATE POLICY "Admins manage runs" ON pipeline_runs FOR ALL USING (is_admin());
   END IF;
 END $$;
+
+-- ── Chart: 아티스트 차트 테이블 ──
+
+CREATE TABLE IF NOT EXISTS chart_votes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  artist_name TEXT NOT NULL,
+  week_start DATE NOT NULL DEFAULT (date_trunc('week', NOW() AT TIME ZONE 'Asia/Seoul'))::date,
+  voted_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chart_votes_week ON chart_votes(week_start, artist_name);
+CREATE INDEX IF NOT EXISTS idx_chart_votes_user ON chart_votes(user_id, week_start);
+
+ALTER TABLE chart_votes ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Read chart votes') THEN
+    CREATE POLICY "Read chart votes" ON chart_votes FOR SELECT USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users vote') THEN
+    CREATE POLICY "Users vote" ON chart_votes FOR INSERT WITH CHECK (auth.uid() = user_id);
+  END IF;
+END $$;
+
+-- 이번 주 차트 순위 조회 함수
+CREATE OR REPLACE FUNCTION get_weekly_chart()
+RETURNS TABLE(artist_name TEXT, vote_count BIGINT, rank BIGINT) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    cv.artist_name,
+    COUNT(*)::BIGINT AS vote_count,
+    RANK() OVER (ORDER BY COUNT(*) DESC)::BIGINT AS rank
+  FROM chart_votes cv
+  WHERE cv.week_start = (date_trunc('week', NOW() AT TIME ZONE 'Asia/Seoul'))::date
+  GROUP BY cv.artist_name
+  ORDER BY vote_count DESC
+  LIMIT 50;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 오늘 투표 횟수 조회 (기본 1회 + 광고 보너스)
+CREATE OR REPLACE FUNCTION get_today_vote_count(p_user_id UUID)
+RETURNS INT AS $$
+BEGIN
+  RETURN (
+    SELECT COUNT(*)::INT FROM chart_votes
+    WHERE user_id = p_user_id
+    AND (voted_at AT TIME ZONE 'Asia/Seoul')::date = (NOW() AT TIME ZONE 'Asia/Seoul')::date
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 투표 실행 (max_votes = 1 + 광고 보너스)
+CREATE OR REPLACE FUNCTION cast_chart_vote(p_artist_name TEXT, p_max_votes INT DEFAULT 1)
+RETURNS BOOLEAN AS $$
+DECLARE
+  v_user_id UUID := auth.uid();
+  v_today DATE := (NOW() AT TIME ZONE 'Asia/Seoul')::date;
+  v_week_start DATE := (date_trunc('week', NOW() AT TIME ZONE 'Asia/Seoul'))::date;
+  v_count INT;
+BEGIN
+  IF v_user_id IS NULL THEN RETURN FALSE; END IF;
+
+  SELECT COUNT(*)::INT INTO v_count FROM chart_votes
+  WHERE user_id = v_user_id
+  AND (voted_at AT TIME ZONE 'Asia/Seoul')::date = v_today;
+
+  IF v_count >= p_max_votes THEN RETURN FALSE; END IF;
+
+  INSERT INTO chart_votes (user_id, artist_name, week_start)
+  VALUES (v_user_id, p_artist_name, v_week_start);
+
+  RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ── Artist Chat Board ──
+
+CREATE TABLE IF NOT EXISTS artist_chats (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  artist_name TEXT NOT NULL,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  nickname TEXT NOT NULL DEFAULT 'Anonymous',
+  nationality TEXT NOT NULL DEFAULT '',
+  fandom TEXT NOT NULL DEFAULT '',
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_artist_chats_artist ON artist_chats(artist_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_artist_chats_cleanup ON artist_chats(created_at);
+
+ALTER TABLE artist_chats ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Read artist chats') THEN
+    CREATE POLICY "Read artist chats" ON artist_chats FOR SELECT USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users send chat') THEN
+    CREATE POLICY "Users send chat" ON artist_chats FOR INSERT WITH CHECK (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users delete own chat') THEN
+    CREATE POLICY "Users delete own chat" ON artist_chats FOR DELETE USING (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users update own chat') THEN
+    CREATE POLICY "Users update own chat" ON artist_chats FOR UPDATE USING (auth.uid() = user_id);
+  END IF;
+END $$;
+
+-- 24시간 롤링 윈도우 + 아티스트당 300개 제한
+CREATE OR REPLACE FUNCTION cleanup_old_chats()
+RETURNS void AS $$
+BEGIN
+  DELETE FROM artist_chats WHERE created_at < NOW() - INTERVAL '24 hours';
+
+  DELETE FROM artist_chats WHERE id IN (
+    SELECT id FROM (
+      SELECT id, ROW_NUMBER() OVER (PARTITION BY artist_name ORDER BY created_at DESC) AS rn
+      FROM artist_chats
+    ) sub WHERE rn > 300
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;

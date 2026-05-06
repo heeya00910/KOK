@@ -19,6 +19,7 @@ class ArticleDetailPage extends StatefulWidget {
 class _ArticleDetailPageState extends State<ArticleDetailPage> {
   final _commentController = TextEditingController();
   final _commentFocusNode = FocusNode();
+  bool _sourcesExpanded = false;
 
   NewsArticle get _a => widget.article;
 
@@ -105,14 +106,13 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
         background: Stack(
           fit: StackFit.expand,
           children: [
-            CachedNetworkImage(
-              imageUrl: _a.imageUrl,
-              fit: BoxFit.cover,
-              errorWidget: (_, __, ___) => Container(
-                color: KokColors.surfaceLight,
-                child: const Icon(Icons.music_note, size: 40, color: KokColors.textMuted),
-              ),
-            ),
+            _a.imageUrl.isNotEmpty && _a.imageUrl.startsWith('http')
+                ? CachedNetworkImage(
+                    imageUrl: _a.imageUrl,
+                    fit: BoxFit.cover,
+                    errorWidget: (_, __, ___) => _buildDetailFallbackImage(),
+                  )
+                : _buildDetailFallbackImage(),
             Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -155,11 +155,46 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
     );
   }
 
+  Widget _buildDetailFallbackImage() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            KokColors.primary.withAlpha(60),
+            KokColors.surface,
+            KokColors.accent.withAlpha(40),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.music_note_rounded, color: KokColors.primary.withAlpha(80), size: 48),
+            const SizedBox(height: 8),
+            Text(
+              _a.artistTags.isNotEmpty ? _a.artistTags.first : 'K-POP',
+              style: TextStyle(
+                color: KokColors.textMuted.withAlpha(120),
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 2,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _sentimentBadge() {
     final (icon, color, label) = switch (_a.sentiment) {
-      'positive' => (Icons.trending_up_rounded, KokColors.success, 'Positive'),
-      'negative' => (Icons.trending_down_rounded, KokColors.error, 'Critical'),
-      'mixed' => (Icons.swap_vert_rounded, KokColors.warning, 'Divided'),
+      'positive' || 'supportive' => (Icons.trending_up_rounded, KokColors.success, 'Supportive'),
+      'negative' || 'critical' => (Icons.trending_down_rounded, KokColors.error, 'Critical'),
+      'mixed' || 'divided' => (Icons.swap_vert_rounded, KokColors.warning, 'Divided'),
+      'amused' => (Icons.sentiment_very_satisfied_rounded, const Color(0xFFFFB74D), 'Amused'),
       _ => (Icons.horizontal_rule_rounded, KokColors.textMuted, 'Neutral'),
     };
     return Container(
@@ -214,9 +249,10 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
 
   Widget _buildKoreanReaction(String lang) {
     final (icon, color, label) = switch (_a.sentiment) {
-      'positive' => (Icons.trending_up_rounded, KokColors.success, lang == 'es' ? 'Positivo' : 'Positive'),
-      'negative' => (Icons.trending_down_rounded, KokColors.error, lang == 'es' ? 'Cr\u00edtico' : 'Critical'),
-      'mixed' => (Icons.swap_vert_rounded, KokColors.warning, lang == 'es' ? 'Dividido' : 'Divided'),
+      'positive' || 'supportive' => (Icons.trending_up_rounded, KokColors.success, lang == 'es' ? 'Positivo' : 'Supportive'),
+      'negative' || 'critical' => (Icons.trending_down_rounded, KokColors.error, lang == 'es' ? 'Cr\u00edtico' : 'Critical'),
+      'mixed' || 'divided' => (Icons.swap_vert_rounded, KokColors.warning, lang == 'es' ? 'Dividido' : 'Divided'),
+      'amused' => (Icons.sentiment_very_satisfied_rounded, const Color(0xFFFFB74D), lang == 'es' ? 'Divertido' : 'Amused'),
       _ => (Icons.horizontal_rule_rounded, KokColors.textMuted, lang == 'es' ? 'Neutral' : 'Neutral'),
     };
 
@@ -252,7 +288,7 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                     ),
                     const Spacer(),
                     Text(
-                      '${_formatNumber(_a.reactionSampleSize)} ${lang == 'es' ? 'reacciones' : 'reactions'}',
+                      '${_formatNumber(_a.reactionSampleSize)} ${lang == 'es' ? 'fuentes consultadas' : 'sources referenced'}',
                       style: const TextStyle(fontSize: 12, color: KokColors.textMuted),
                     ),
                   ],
@@ -278,12 +314,40 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
         children: [
           _sectionHeader(Icons.format_quote_rounded, lang == 'es' ? 'Reacciones traducidas' : 'Top translated reactions'),
           const SizedBox(height: 12),
-          ..._a.topReactions.asMap().entries.map((entry) {
-            return _buildReactionCard(entry.value, entry.key, lang);
-          }),
+          if (_validReactions(lang).isEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: KokColors.surfaceLight,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: KokColors.border, width: 0.5),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline_rounded, size: 18, color: KokColors.textMuted.withAlpha(150)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      lang == 'es'
+                          ? 'Sin comentarios reales disponibles. Consulta el resumen de reacciones arriba.'
+                          : 'No real comments available. Check the reaction summary above.',
+                      style: TextStyle(fontSize: 13, color: KokColors.textMuted.withAlpha(180), height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            ..._validReactions(lang).asMap().entries.map((entry) {
+              return _buildReactionCard(entry.value, entry.key, lang);
+            }),
         ],
       ),
     );
+  }
+
+  List<TranslatedReaction> _validReactions(String lang) {
+    return _a.topReactions.where((r) => r.content(lang).trim().isNotEmpty).toList();
   }
 
   Widget _buildReactionCard(TranslatedReaction reaction, int index, String lang) {
@@ -342,14 +406,53 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
   // ── Original Sources ──
 
   Widget _buildOriginalSources(String lang) {
+    final sources = _a.originalSources;
+    final previewCount = 2;
+    final hasMore = sources.length > previewCount;
+    final visible = _sourcesExpanded ? sources : sources.take(previewCount).toList();
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _sectionHeader(Icons.link_rounded, lang == 'es' ? 'Fuentes originales' : 'Original sources'),
+          Row(
+            children: [
+              Expanded(
+                child: _sectionHeader(
+                  Icons.link_rounded,
+                  '${lang == 'es' ? 'Fuentes originales' : 'Original sources'} (${sources.length})',
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 12),
-          ..._a.originalSources.map((source) => _buildSourceLink(source)),
+          ...visible.map((source) => _buildSourceLink(source)),
+          if (hasMore)
+            GestureDetector(
+              onTap: () => setState(() => _sourcesExpanded = !_sourcesExpanded),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                alignment: Alignment.center,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _sourcesExpanded
+                          ? (lang == 'es' ? 'Mostrar menos' : 'Show less')
+                          : (lang == 'es' ? 'Ver ${sources.length - previewCount} mas' : 'Show ${sources.length - previewCount} more'),
+                      style: TextStyle(fontSize: 12, color: KokColors.primary, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      _sourcesExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+                      size: 16,
+                      color: KokColors.primary,
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );

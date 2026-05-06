@@ -49,10 +49,11 @@ class AppProvider extends ChangeNotifier {
   }
 
   bool isArticleUnlocked(String articleId) {
+    if (_isAdmin) return true;
     return _unlockedArticleIds.contains(articleId);
   }
 
-  bool get canViewFree => _freeViewsRemaining > 0;
+  bool get canViewFree => _isAdmin || _freeViewsRemaining > 0;
 
   List<UserComment> getCommentsForArticle(String articleId) {
     return _commentsByArticle[articleId] ?? [];

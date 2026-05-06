@@ -13,6 +13,40 @@ class SourceCollector {
   String get _youtubeApiKey => dotenv.env['YOUTUBE_API_KEY'] ?? '';
 
   // ═══════════════════════════════════════════
+  //  한국어 → 공식 영어명 매핑 (AI 오역 방지)
+  // ═══════════════════════════════════════════
+
+  static const koToOfficialName = <String, String>{
+    '방탄소년단': 'BTS', '스트레이키즈': 'Stray Kids', '세븐틴': 'SEVENTEEN',
+    '엔하이픈': 'ENHYPEN', '투모로우바이투게더': 'TXT', '엑소': 'EXO',
+    '에이티즈': 'ATEEZ', '제로베이스원': 'ZEROBASEONE',
+    '보이넥스트도어': 'BOYNEXTDOOR', '트레저': 'TREASURE',
+    '라이즈': 'RIIZE', '몬스타엑스': 'MONSTA X',
+    '블랙핑크': 'BLACKPINK', '에스파': 'aespa', '뉴진스': 'NewJeans',
+    '아이브': 'IVE', '르세라핌': 'LE SSERAFIM', '트와이스': 'TWICE',
+    '잇지': 'ITZY', '여자아이들': '(G)I-DLE', '엔믹스': 'NMIXX',
+    '아일릿': 'ILLIT', '베이비몬스터': 'BABYMONSTER',
+    '케플러': 'Kep1er', '레드벨벳': 'Red Velvet',
+    '아이즈나': 'izna',
+    '정국': 'Jung Kook', '지민': 'Jimin', '뷔': 'V', '슈가': 'SUGA',
+    '리사': 'Lisa', '제니': 'Jennie', '로제': 'Rosé', '지수': 'Jisoo',
+    '아이유': 'IU', '임영웅': 'Lim Young-woong',
+    '민희진': 'Min Hee-jin', '카리나': 'Karina', '윈터': 'Winter',
+    '하이브': 'HYBE', '빅히트': 'BIGHIT', '어도어': 'ADOR',
+    '스타쉽': 'STARSHIP', '플레디스': 'PLEDIS', '큐브': 'CUBE',
+  };
+
+  static String getOfficialName(String koName) =>
+      koToOfficialName[koName] ?? koName;
+
+  static String buildNameMappingPrompt() {
+    final entries = koToOfficialName.entries
+        .map((e) => '${e.key}=${e.value}')
+        .join(', ');
+    return 'ARTIST NAME MAP (MUST use these EXACT English names, never guess): $entries';
+  }
+
+  // ═══════════════════════════════════════════
   //  아티스트 목록
   // ═══════════════════════════════════════════
 
@@ -137,49 +171,39 @@ class SourceCollector {
   //  검색 쿼리 생성
   // ═══════════════════════════════════════════
 
-  /// 네이버용 쿼리 생성: [아이돌] + 사건성 키워드
+  /// 네이버용 쿼리: 반드시 [특정 아티스트명] + [사건 키워드]
+  /// "아이돌" 같은 범용어 사용 금지 — 쓰레기 유입 차단
   List<String> _generateNaverQueries() {
-    final artists = _pickArtists(3);
-    final naverSuffixes = [
-      '컴백', '신곡', '논란', '한국 반응', '차트',
-      '빌보드', '월드투어', '소속사', '계약', '재계약',
+    final artists = _pickArtists(4);
+    final suffixes = [
+      '컴백', '논란', '신곡', '월드투어', '빌보드',
+      '소속사', '계약', '시상식', '한국 반응',
     ];
 
     final queries = <String>[];
     for (final artist in artists) {
-      final suffix = naverSuffixes[_naverIdx % naverSuffixes.length];
-      queries.add('$artist $suffix');
+      final suffix = suffixes[_naverIdx % suffixes.length];
+      queries.add('"$artist" $suffix');
       _naverIdx++;
     }
-    // 업계 전반 쿼리 1개 추가
-    const industryQueries = [
-      '케이팝 빌보드 차트', '아이돌 컴백 소식', '하이브 YG SM JYP 뉴스',
-      '아이돌 논란 여론', '케이팝 시상식 수상', '아이돌 월드투어 콘서트',
-    ];
-    queries.add(industryQueries[_naverIdx % industryQueries.length]);
 
     return queries;
   }
 
-  /// YouTube용 쿼리 생성: [아이돌] + 이슈 키워드
+  /// YouTube용 쿼리: [특정 아티스트명] + [이슈 키워드]
   List<String> _generateYouTubeQueries() {
-    final artists = _pickArtists(2);
-    final ytSuffixes = [
-      '이슈 정리', '논란 정리', '컴백 반응',
-      '한국 반응', '해외 반응', '근황', '소속사 이슈',
+    final artists = _pickArtists(4);
+    final suffixes = [
+      '논란 정리', '최신 소식', '반응 모음', '팬 반응',
+      '이슈 정리', '컴백 반응', '한국 반응',
     ];
 
     final queries = <String>[];
     for (final artist in artists) {
-      final suffix = ytSuffixes[_youtubeIdx % ytSuffixes.length];
+      final suffix = suffixes[_youtubeIdx % suffixes.length];
       queries.add('$artist $suffix');
       _youtubeIdx++;
     }
-    // 업계 전반 1개
-    const general = [
-      '케이팝 핫이슈 정리', '아이돌 논란 총정리', '케이팝 뉴스 이번주',
-    ];
-    queries.add(general[_youtubeIdx % general.length]);
 
     return queries;
   }
@@ -195,137 +219,289 @@ class SourceCollector {
   }
 
   // ═══════════════════════════════════════════
-  //  Relevance Scoring
+  //  Artist Weight System
+  //  팬덤 규모 + 글로벌 인지도 기반 (1~10)
+  //  향후 API 기반 주 1회 자동 업데이트 가능하도록 분리
   // ═══════════════════════════════════════════
 
-  // K-pop과 무관한 연예인 (배우/셰프/웹툰작가 등) 제외
-  static const _nonKpopCelebs = [
-    '차은우', '김수현', '백종원', '기안84', '류준열', '한소희', '송혜교',
-    '현빈', '손예진', '이민호', '공유', '이종석', '박서준', '김태리',
-    '수지', '전지현', '이정재', '황정민', '마동석', '유재석', '강호동',
-    '이승기', '신동엽', '박나래', '전현무',
-  ];
+  static final Map<String, int> _artistWeights = {
+    // Tier S — weight 10
+    'BTS': 10, '방탄소년단': 10,
+    'BLACKPINK': 10, '블랙핑크': 10,
+    // Tier S- — weight 9
+    'Jung Kook': 9, '정국': 9, 'Lisa': 9, '리사': 9,
+    'Jennie': 9, '제니': 9, 'Rosé': 9, '로제': 9,
+    'Stray Kids': 9, '스트레이키즈': 9,
+    'SEVENTEEN': 9, '세븐틴': 9,
+    'KATSEYE': 9,
+    // Tier A — weight 8
+    'NewJeans': 8, '뉴진스': 8,
+    'aespa': 8, '에스파': 8,
+    'ENHYPEN': 8, '엔하이픈': 8,
+    'TWICE': 8, '트와이스': 8,
+    // Tier A- — weight 7
+    'IVE': 7, '아이브': 7,
+    'LE SSERAFIM': 7, '르세라핌': 7,
+    'TXT': 7, '투모로우바이투게더': 7,
+    'ATEEZ': 7, '에이티즈': 7,
+    'NCT': 7,
+    'RIIZE': 7, '라이즈': 7,
+    'BABYMONSTER': 7, '베이비몬스터': 7,
+    'EXO': 7, '엑소': 7,
+    // Tier B — weight 6
+    'ITZY': 6, '잇지': 6,
+    'NMIXX': 6, '엔믹스': 6,
+    'ILLIT': 6, '아일릿': 6,
+    'TWS': 6,
+    'KISS OF LIFE': 6,
+    'ZEROBASEONE': 6, '제로베이스원': 6, 'ZB1': 6,
+    'BOYNEXTDOOR': 6, '보이넥스트도어': 6,
+    'MONSTA X': 6, '몬스타엑스': 6,
+    'TREASURE': 6, '트레저': 6,
+    '(G)I-DLE': 6, '여자아이들': 6,
+    'Red Velvet': 6, '레드벨벳': 6,
+    'Kep1er': 6, '케플러': 6,
+    // Tier C — weight 4~5
+    'Jimin': 5, '지민': 5, 'V': 5, '뷔': 5, 'SUGA': 5, '슈가': 5,
+    'Jisoo': 5, '지수': 5, 'IU': 5, '아이유': 5,
+    'izna': 5, '아이즈나': 5, 'Hearts2Hearts': 5, 'MEOVV': 5,
+    '임영웅': 4,
+    // 소속사 — weight 5
+    'HYBE': 5, '하이브': 5, 'SM': 5, 'YG': 5, 'JYP': 5,
+    'ADOR': 5, '어도어': 5, 'STARSHIP': 4, '스타쉽': 4,
+    '민희진': 5,
+  };
 
-  int calculateRelevanceScore(Map<String, dynamic> item) {
-    int score = 0;
-    final title = (item['title'] as String? ?? '').toLowerCase();
-    final snippet = (item['snippet'] as String? ?? '').toLowerCase();
-    final url = (item['url'] as String? ?? '').toLowerCase();
-    final channel = (item['channel'] as String? ?? '').toLowerCase();
-    final combined = '$title $snippet';
-    final publishedAt = item['published_at'] as String? ?? '';
+  static int getArtistWeight(String name) => _artistWeights[name] ?? 3;
 
-    // ★ 필수 조건: K-pop 아이돌/소속사가 반드시 언급되어야 함
-    bool mentionsKpop = false;
-    for (final name in _majorArtists) {
-      if (combined.contains(name.toLowerCase())) {
-        mentionsKpop = true;
-        score += 3;
-        break;
+  // ═══════════════════════════════════════════
+  //  Chart Bonus — 차트 순위 기반 가중치 (플러스 알파)
+  //  차트 데이터 없어도 시스템 정상 작동
+  // ═══════════════════════════════════════════
+
+  static Map<String, int> _chartBonus = {};
+
+  /// 파이프라인 실행 전 차트 데이터를 로드해서 보너스 맵 생성
+  static void loadChartBonus(List<Map<String, dynamic>> chartData) {
+    _chartBonus = {};
+    for (final entry in chartData) {
+      final name = entry['artist_name'] as String? ?? '';
+      final rank = entry['rank'] as int? ?? 999;
+      if (name.isEmpty) continue;
+
+      int bonus;
+      if (rank == 1) {
+        bonus = 3;
+      } else if (rank <= 3) {
+        bonus = 2;
+      } else if (rank <= 10) {
+        bonus = 1;
+      } else {
+        bonus = 0;
+      }
+      if (bonus > 0) _chartBonus[name] = bonus;
+    }
+  }
+
+  static int _getChartBonus(String text) {
+    if (_chartBonus.isEmpty) return 0;
+    int maxBonus = 0;
+    final lower = text.toLowerCase();
+    for (final entry in _chartBonus.entries) {
+      if (lower.contains(entry.key.toLowerCase()) && entry.value > maxBonus) {
+        maxBonus = entry.value;
       }
     }
-    for (final name in _majorAgencies) {
-      if (combined.contains(name.toLowerCase())) {
-        mentionsKpop = true;
-        score += 2;
-        break;
-      }
-    }
-    // 업계 전반 키워드도 허용
-    const industryMust = ['케이팝', 'k-pop', 'kpop', '아이돌', '걸그룹', '보이그룹'];
-    for (final kw in industryMust) {
-      if (combined.contains(kw)) { mentionsKpop = true; break; }
-    }
+    return maxBonus;
+  }
 
-    // K-pop 언급 없으면 즉시 탈락
-    if (!mentionsKpop) return -1;
+  static final _nonKpopNoise = RegExp(
+    r'(컴투스|com2us|넷마블|넥슨|크래프톤|카카오게임|게임빌|'
+    r'주가|코스피|코스닥|증시|부동산|정치|국회|대통령|'
+    r'날씨|교통|사건사고|범죄|재판|검찰|경찰|'
+    r'야구|축구|농구|배구|올림픽|월드컵|프로야구|KBO|EPL)',
+    caseSensitive: false,
+  );
 
-    // 비 K-pop 연예인만 나오는 기사 제외
-    for (final name in _nonKpopCelebs) {
-      if (combined.contains(name.toLowerCase())) {
-        score -= 3;
-      }
-    }
+  /// 텍스트에서 가장 높은 artist_weight를 찾는다
+  static int _findMaxWeight(String text) {
+    if (_nonKpopNoise.hasMatch(text)) return 0;
 
-    // 사건성 키워드: +3
-    for (final kw in _eventKeywords) {
-      if (combined.contains(kw)) {
-        score += 3;
-        break;
-      }
-    }
-
-    // 반응 키워드: +4
-    for (final kw in _reactionKeywords) {
-      if (combined.contains(kw)) {
-        score += 4;
-        break;
-      }
-    }
-
-    // 고임팩트 이슈: +4
-    const highImpact = ['차트', '빌보드', '월드투어', '수상', '시상식',
-      '논란', '계약', '재계약', '그래미', '코첼라'];
-    for (final kw in highImpact) {
-      if (combined.contains(kw)) {
-        score += 4;
-        break;
-      }
-    }
-
-    // 팬 플랫폼/문화 키워드: +1
-    for (final kw in _extraKeywords) {
-      if (combined.contains(kw.toLowerCase())) {
-        score += 1;
-        break;
-      }
-    }
-
-    // 쓰레기 콘텐츠: -5 (override 키워드 있으면 면제)
-    if (_trashPatterns.hasMatch(combined)) {
-      bool hasOverride = false;
-      for (final kw in _overrideKeywords) {
-        if (combined.contains(kw)) {
-          hasOverride = true;
-          break;
+    int maxWeight = 0;
+    final lower = text.toLowerCase();
+    for (final entry in _artistWeights.entries) {
+      final key = entry.key.toLowerCase();
+      if (key.length <= 2) {
+        final pattern = RegExp('(^|[^a-z가-힣])${RegExp.escape(key)}([^a-z가-힣]|\$)', caseSensitive: false);
+        if (pattern.hasMatch(lower) && entry.value > maxWeight) {
+          maxWeight = entry.value;
+        }
+      } else {
+        if (lower.contains(key) && entry.value > maxWeight) {
+          maxWeight = entry.value;
         }
       }
-      if (!hasOverride) score -= 5;
+    }
+    return maxWeight;
+  }
+
+  // K-pop과 무관한 연예인 (배우/셰프/웹툰작가 등)
+  static const _nonKpopCelebs = [
+    // 배우/예능인
+    '김수현', '백종원', '기안84', '류준열', '한소희', '송혜교',
+    '현빈', '손예진', '이민호', '공유', '이종석', '박서준', '김태리',
+    '전지현', '이정재', '황정민', '마동석', '유재석', '강호동',
+    '신동엽', '박나래', '전현무', '이광수', '김종국',
+    // 비활동/배우전환 아이돌 (현재 K-pop 활동 안 함)
+    '옥택연', '택연', '2PM', '이준호', '준호', '장우영', '닉쿤',
+    '윤수일', '나훈아', '조용필',
+    '지예은', '바타', '미연',
+    // 중국/일본 연예인
+    '타오', 'Tao',
+  ];
+
+  // ═══════════════════════════════════════════
+  //  Feed Score 계산
+  //  feed_score = artist_weight + issue_score
+  //             + korean_reaction_score + freshness_score
+  //             - low_quality_penalty
+  // ═══════════════════════════════════════════
+
+  static const _issueKeywordsHigh = <String, int>{
+    '논란': 5, '사과문': 5, '라이브 논란': 5, '실력 논란': 5, '표절': 5,
+    '계약': 5, '재계약': 5, '소속사 분쟁': 5, '탈퇴': 5, '복귀': 5,
+    '불화': 5, '고소': 5, '소송': 5, '퇴출': 5, '폭로': 5,
+  };
+  static const _issueKeywordsMid = <String, int>{
+    '월드투어': 4, '시상식': 4, '수상': 4, '그래미': 4, '코첼라': 4,
+    '빌보드': 4, '차트': 4, '음원': 4, '1위': 4,
+  };
+  static const _issueKeywordsLow = <String, int>{
+    '컴백': 3, '신곡': 3, '앨범': 3, '뮤직비디오': 3, '티저': 3,
+    '콘셉트': 3, '초동': 3, '데뷔': 3,
+  };
+  static const _issueKeywordsMin = <String, int>{
+    '열애설': 2, '공항패션': 2, '브랜드 앰버서더': 2, '콜라보': 2,
+    '화보': 2, '팬미팅': 2, '콘서트': 2,
+  };
+
+  static const _reactionKeywordsList = [
+    '한국 반응', '네티즌 반응', '커뮤니티 반응', '팬덤 반응',
+    '베댓', '댓글', '여론', '갑론을박', '화제', '재조명', '해외 반응',
+  ];
+
+  /// feed_score 계산 — 통과 여부도 함께 반환
+  Map<String, dynamic> calculateFeedScore(Map<String, dynamic> item) {
+    final title = (item['title'] as String? ?? '');
+    final snippet = (item['snippet'] as String? ?? '');
+    final combined = '$title $snippet'.toLowerCase();
+    final publishedAt = item['published_at'] as String? ?? '';
+
+    // ── 1. artist_weight ──
+    final artistWeight = _findMaxWeight(combined);
+
+    // ★ 핵심: _artistWeights에 등록된 아티스트가 없으면 즉시 탈락
+    // "아이돌", "걸그룹" 같은 범용 키워드만으로는 통과 불가
+    if (artistWeight == 0) {
+      return {'score': -1, 'pass': false, 'artist_weight': 0};
     }
 
-    // 72시간 이내: +2
+    // 비 K-pop 연예인이 주인공인 기사 제외
+    for (final name in _nonKpopCelebs) {
+      if (title.toLowerCase().contains(name.toLowerCase())) {
+        return {'score': -1, 'pass': false, 'artist_weight': 0};
+      }
+    }
+
+    // ── 2. issue_score ──
+    int issueScore = 0;
+    for (final e in _issueKeywordsHigh.entries) {
+      if (combined.contains(e.key)) { issueScore = e.value; break; }
+    }
+    if (issueScore == 0) {
+      for (final e in _issueKeywordsMid.entries) {
+        if (combined.contains(e.key)) { issueScore = e.value; break; }
+      }
+    }
+    if (issueScore == 0) {
+      for (final e in _issueKeywordsLow.entries) {
+        if (combined.contains(e.key)) { issueScore = e.value; break; }
+      }
+    }
+    if (issueScore == 0) {
+      for (final e in _issueKeywordsMin.entries) {
+        if (combined.contains(e.key)) { issueScore = e.value; break; }
+      }
+    }
+
+    // ── 3. korean_reaction_score ──
+    int reactionScore = 0;
+    for (final kw in _reactionKeywordsList) {
+      if (combined.contains(kw)) { reactionScore = 5; break; }
+    }
+
+    // ── 4. freshness_score ──
+    int freshnessScore = 0;
     if (publishedAt.isNotEmpty) {
       try {
         final pub = DateTime.parse(publishedAt);
-        if (DateTime.now().toUtc().difference(pub).inHours <= 72) {
-          score += 2;
+        final hoursAgo = DateTime.now().toUtc().difference(pub).inHours;
+        if (hoursAgo <= 24) {
+          freshnessScore = 3;
+        } else if (hoursAgo <= 72) {
+          freshnessScore = 2;
+        } else if (hoursAgo <= 168) {
+          freshnessScore = 1;
+        } else {
+          freshnessScore = -3;
         }
       } catch (_) {
-        score += 1; // 파싱 실패 시 최소 점수
+        freshnessScore = 0;
       }
     }
 
-    // 신뢰 소스: +2
-    for (final src in _trustedSources) {
-      if (url.contains(src)) {
-        score += 2;
-        break;
+    // ── 5. low_quality_penalty ──
+    int penalty = 0;
+    if (_trashPatterns.hasMatch(combined)) {
+      bool hasOverride = false;
+      for (final kw in _overrideKeywords) {
+        if (combined.contains(kw)) { hasOverride = true; break; }
       }
-    }
-    for (final ch in _trustedChannels) {
-      if (channel.contains(ch.toLowerCase())) {
-        score += 2;
-        break;
-      }
+      if (!hasOverride) penalty = 5;
     }
 
-    // 댓글 있으면: +2
-    final comments = item['comments'] as List?;
-    if (comments != null && comments.isNotEmpty) {
-      score += 2;
+    // ── 6. chart_bonus (플러스 알파, 없어도 OK) ──
+    final chartBonus = _getChartBonus(combined);
+
+    // ── feed_score ──
+    final feedScore = artistWeight + issueScore + reactionScore + freshnessScore + chartBonus - penalty;
+
+    // ── 통과 기준 ──
+    bool pass;
+    if (artistWeight >= 8) {
+      pass = feedScore >= 10;
+    } else if (artistWeight <= 5) {
+      pass = (issueScore + reactionScore) >= 8;
+    } else {
+      pass = feedScore >= 12;
     }
 
-    return score;
+    return {
+      'score': feedScore,
+      'pass': pass,
+      'artist_weight': artistWeight,
+      'issue_score': issueScore,
+      'reaction_score': reactionScore,
+      'freshness_score': freshnessScore,
+      'chart_bonus': chartBonus,
+      'penalty': penalty,
+    };
+  }
+
+  /// 하위 호환: 기존 코드에서 int만 필요한 곳
+  int calculateRelevanceScore(Map<String, dynamic> item) {
+    final result = calculateFeedScore(item);
+    return result['pass'] == true ? (result['score'] as int) : -1;
   }
 
   // ═══════════════════════════════════════════
@@ -351,14 +527,19 @@ class SourceCollector {
       }
     }
 
-    // relevance score로 필터 + 정렬
-    final scored = results.map((item) {
-      item['_relevance'] = calculateRelevanceScore(item);
-      return item;
-    }).where((item) => (item['_relevance'] as int) >= 6).toList()
-      ..sort((a, b) => (b['_relevance'] as int).compareTo(a['_relevance'] as int));
+    // feed_score 기반 필터 + 정렬
+    final scored = <Map<String, dynamic>>[];
+    for (final item in results) {
+      final fs = calculateFeedScore(item);
+      if (fs['pass'] == true) {
+        item['_relevance'] = fs['score'] as int;
+        item['_artist_weight'] = fs['artist_weight'] as int;
+        scored.add(item);
+      }
+    }
+    scored.sort((a, b) => (b['_relevance'] as int).compareTo(a['_relevance'] as int));
 
-    debugPrint('[KOK Source] Naver total: ${results.length}→${scored.length} (score≥6)');
+    debugPrint('[KOK Source] Naver total: ${results.length}→${scored.length} (feed_score pass)');
     return scored;
   }
 
@@ -392,6 +573,7 @@ class SourceCollector {
         'source': 'naver_news',
         'published_at': item['pubDate'] ?? '',
         'comments': <String>[],
+        'image_url': '',
       };
     }).where((item) => (item['title'] as String).length >= 10).toList();
   }
@@ -438,14 +620,19 @@ class SourceCollector {
       }
     }
 
-    // relevance score로 필터 + 정렬
-    final scored = results.map((item) {
-      item['_relevance'] = calculateRelevanceScore(item);
-      return item;
-    }).where((item) => (item['_relevance'] as int) >= 6).toList()
-      ..sort((a, b) => (b['_relevance'] as int).compareTo(a['_relevance'] as int));
+    // feed_score 기반 필터 + 정렬
+    final scored = <Map<String, dynamic>>[];
+    for (final item in results) {
+      final fs = calculateFeedScore(item);
+      if (fs['pass'] == true) {
+        item['_relevance'] = fs['score'] as int;
+        item['_artist_weight'] = fs['artist_weight'] as int;
+        scored.add(item);
+      }
+    }
+    scored.sort((a, b) => (b['_relevance'] as int).compareTo(a['_relevance'] as int));
 
-    debugPrint('[KOK Source] YouTube total: ${results.length}→${scored.length} (score≥6)');
+    debugPrint('[KOK Source] YouTube total: ${results.length}→${scored.length} (feed_score pass)');
     return scored;
   }
 
@@ -457,11 +644,10 @@ class SourceCollector {
       'https://www.googleapis.com/youtube/v3/search'
       '?part=snippet'
       '&q=${Uri.encodeComponent(query)}'
-      '&type=video&order=relevance'
+      '&type=video&order=date'
       '&regionCode=KR&relevanceLanguage=ko'
-      '&videoDuration=medium'
       '&maxResults=$maxResults'
-      '&publishedAfter=${_hoursAgo(72)}'
+      '&publishedAfter=${_hoursAgo(168)}'
       '&key=$_youtubeApiKey',
     );
 
@@ -514,6 +700,156 @@ class SourceCollector {
         'source': 'YouTube',
       };
     }).where((c) => (c['text'] as String).isNotEmpty).toList();
+  }
+
+  // ═══════════════════════════════════════════
+  //  Naver 블로그/카페 — 여론·반응 수집
+  // ═══════════════════════════════════════════
+
+  /// 특정 뉴스 사건에 대한 한국인 반응을 블로그/카페/YouTube에서 수집
+  Future<List<Map<String, dynamic>>> collectReactions(String issueTitle, {String snippet = ''}) async {
+    final reactions = <Map<String, dynamic>>[];
+
+    // 1) 네이버 블로그/카페
+    if (_naverClientId.isNotEmpty) {
+      final queries = _buildReactionQueries(issueTitle, snippet);
+      for (final query in queries) {
+        try {
+          final blogResults = await _searchNaverBlog(query, display: 8);
+          reactions.addAll(blogResults);
+        } catch (e) {
+          debugPrint('[KOK Source] Blog "$query" failed: $e');
+        }
+        try {
+          final cafeResults = await _searchNaverCafe(query, display: 8);
+          reactions.addAll(cafeResults);
+        } catch (e) {
+          debugPrint('[KOK Source] Cafe "$query" failed: $e');
+        }
+      }
+    }
+
+    // 2) YouTube 댓글 (해당 뉴스 관련 영상에서 베스트 댓글 수집)
+    if (_youtubeApiKey.isNotEmpty) {
+      try {
+        final clean = issueTitle
+            .replaceAll(RegExp(r'[#\[\]"…💖😵‍💫🎵✨🔥]'), '')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
+        final ytQuery = clean.length > 50 ? clean.substring(0, 50) : clean;
+        final videos = await _searchYouTubeVideos(query: ytQuery, maxResults: 3);
+        for (final video in videos.take(2)) {
+          final videoId = video['videoId'] as String;
+          try {
+            final comments = await _fetchYouTubeComments(videoId, maxResults: 10);
+            for (final c in comments) {
+              if ((c['text'] as String).length >= 10) {
+                reactions.add({
+                  'text': c['text'],
+                  'likes': c['likes'],
+                  'source': 'YouTube',
+                  'url': 'https://www.youtube.com/watch?v=$videoId',
+                });
+              }
+            }
+          } catch (_) {}
+        }
+      } catch (e) {
+        debugPrint('[KOK Source] YouTube reactions failed: $e');
+      }
+    }
+
+    debugPrint('[KOK Source] Reactions for "$issueTitle": ${reactions.length} snippets');
+    return reactions;
+  }
+
+  /// 뉴스 제목의 핵심 내용을 그대로 살려서 검색 쿼리 생성
+  List<String> _buildReactionQueries(String title, String snippet) {
+    final clean = title
+        .replaceAll(RegExp(r'[#\[\]"…💖😵‍💫🎵✨🔥]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    final core = clean.length > 40 ? clean.substring(0, 40) : clean;
+
+    // 아티스트 이름 추출 (제목에서)
+    String? artistKo;
+    for (final entry in koToOfficialName.entries) {
+      if (clean.contains(entry.key)) {
+        artistKo = entry.key;
+        break;
+      }
+    }
+
+    final queries = [
+      '$core 반응',
+      '$core 여론',
+    ];
+
+    // 아티스트명 + 핵심 키워드 조합으로 3번째 쿼리 추가
+    if (artistKo != null) {
+      queries.add('$artistKo 팬 반응');
+    }
+
+    return queries;
+  }
+
+  Future<List<Map<String, dynamic>>> _searchNaverBlog(String query, {int display = 10}) async {
+    final url = Uri.parse(
+      'https://openapi.naver.com/v1/search/blog.json'
+      '?query=${Uri.encodeComponent(query)}'
+      '&display=$display&sort=sim',
+    );
+
+    final response = await http.get(url, headers: {
+      'X-Naver-Client-Id': _naverClientId,
+      'X-Naver-Client-Secret': _naverClientSecret,
+    });
+
+    if (response.statusCode != 200) return [];
+
+    final data = jsonDecode(response.body);
+    final items = data['items'] as List? ?? [];
+
+    return items.map((item) {
+      final title = _stripHtml(item['title'] ?? '');
+      final desc = _stripHtml(item['description'] ?? '');
+      return <String, dynamic>{
+        'text': desc.length > 200 ? desc.substring(0, 200) : desc,
+        'title': title,
+        'source': 'Naver Blog',
+        'url': item['link'] ?? '',
+      };
+    }).where((r) => (r['text'] as String).length >= 20).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> _searchNaverCafe(String query, {int display = 10}) async {
+    final url = Uri.parse(
+      'https://openapi.naver.com/v1/search/cafearticle.json'
+      '?query=${Uri.encodeComponent(query)}'
+      '&display=$display&sort=sim',
+    );
+
+    final response = await http.get(url, headers: {
+      'X-Naver-Client-Id': _naverClientId,
+      'X-Naver-Client-Secret': _naverClientSecret,
+    });
+
+    if (response.statusCode != 200) return [];
+
+    final data = jsonDecode(response.body);
+    final items = data['items'] as List? ?? [];
+
+    return items.map((item) {
+      final title = _stripHtml(item['title'] ?? '');
+      final desc = _stripHtml(item['description'] ?? '');
+      return <String, dynamic>{
+        'text': desc.length > 200 ? desc.substring(0, 200) : desc,
+        'title': title,
+        'source': 'Naver Cafe',
+        'url': item['link'] ?? '',
+      };
+    }).where((r) => (r['text'] as String).length >= 20).toList();
   }
 
   // ═══════════════════════════════════════════

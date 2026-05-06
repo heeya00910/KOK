@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../core/theme/app_theme.dart';
 import 'feed_page.dart';
+import 'chart_page.dart';
 import 'my_page.dart';
 
 class HomeShell extends StatefulWidget {
@@ -15,6 +16,7 @@ class _HomeShellState extends State<HomeShell> {
 
   final _pages = const [
     FeedPage(),
+    ChartPage(),
     MyPage(),
   ];
 
@@ -48,8 +50,15 @@ class _HomeShellState extends State<HomeShell> {
             ),
             NavigationDestination(
               icon: Icon(
-                Icons.person_rounded,
+                Icons.leaderboard_rounded,
                 color: _currentIndex == 1 ? KokColors.primary : KokColors.textMuted,
+              ),
+              label: 'Chart',
+            ),
+            NavigationDestination(
+              icon: Icon(
+                Icons.person_rounded,
+                color: _currentIndex == 2 ? KokColors.primary : KokColors.textMuted,
               ),
               label: 'My',
             ),

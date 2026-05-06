@@ -3,6 +3,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'ai_service.dart';
 import 'content_safety.dart';
+import 'source_collector.dart';
 import 'supabase_service.dart';
 
 class ContentPipeline {
@@ -88,17 +89,16 @@ Each array contains indices of titles that belong to the same issue. Maximum 8 c
   }
 
   // ── Step 3: Score importance ──
-  // SourceCollector의 relevance score + 클러스터 크기 + 댓글 보너스
+  // feed_score + 클러스터 크기 보너스
 
   int scoreImportance(Map<String, dynamic> cluster) {
     final items = cluster['items'] as List;
     final rep = cluster['representative'] as Map<String, dynamic>;
 
-    // 소스 수집 단계에서 이미 계산된 relevance score 활용
     int score = rep['_relevance'] as int? ?? 0;
 
-    // 같은 이슈의 기사 수 보너스 (클러스터 크기)
-    score += items.length * 5;
+    // 클러스터 보너스: 같은 이슈의 기사가 많으면 더 핫한 이슈
+    score += (items.length - 1) * 3;
 
     // 댓글 보너스
     final comments = rep['comments'] as List?;
@@ -141,8 +141,13 @@ Each array contains indices of titles that belong to the same issue. Maximum 8 c
     _groqCallCount++;
     debugPrint('[KOK Pipeline] Groq call #$_groqCallCount: "$title"');
 
+    final nameMap = SourceCollector.buildNameMappingPrompt();
+
     final result = await _ai.callGroqJson('''
 너는 한국 K-pop 여론 분석 전문가야. 아래 한국어 뉴스를 분석해.
+중요: 해외 K-pop 팬들이 "진짜 흥미로워하고 클릭할만한" 뉴스인지를 판단 기준으로 삼아라. 사소하거나 시시한 뉴스는 is_relevant: false 처리해라.
+
+$nameMap
 
 제목: ${title.length > 120 ? '${title.substring(0, 120)}...' : title}
 내용: ${snippet.length > 400 ? '${snippet.substring(0, 400)}...' : snippet}
@@ -152,7 +157,7 @@ $commentsSection
 JSON으로 출력:
 {
   "is_relevant": true,
-  "issue_summary_ko": "핵심을 짚는 한국어 요약 (2~3문장, 맥락 포함)",
+  "issue_summary_ko": "왜 이게 화제인지, 맥락과 의미를 담은 한국어 요약 (2~3문장). 단순 사실 나열 X. 팬이 아닌 사람도 이해할 수 있도록 배경 포함.",
   "reaction_tone": "supportive/critical/divided/amused/neutral",
   "issue_tags": ["COMEBACK"],
   "artist_tags": ["BTS"],
@@ -162,14 +167,21 @@ JSON으로 출력:
 }
 
 규칙:
-- is_relevant: K-pop 아이돌, 소속사, 업계 뉴스면 true
-- issue_summary_ko: "왜 이게 화제인지"를 담아야 함. 단순 사실 나열 X, 맥락과 의미 포함 O
-- reaction_tone: 한국 대중 반응의 전체 분위기. supportive(응원), critical(비판), divided(찬반), amused(웃김/밈), neutral(담담). 실제 댓글이 없으면 뉴스 내용 기반으로 판단
+- is_relevant 판단 기준 (엄격하게):
+  * true: 유명 K-pop 아이돌/소속사의 컴백, 논란, 계약, 수상, 차트 등 팬들이 열광할 뉴스
+  * false: 마이너 소식, 시시콜콜한 일상 TMI, 단순 일정 공지, 광고성 기사, K-pop과 무관한 연예 뉴스
+  * false: 제목만 자극적이고 내용이 없는 낚시 기사
+- issue_summary_ko: "왜 한국에서 화제인지"를 설명. 맥락, 배경, 의미를 담아라.
+- reaction_tone (가장 중요!! "neutral"을 기본값으로 쓰지 마라):
+  * "supportive": 팬 응원/기대/자랑 (컴백, 수상, 선행, 성과)
+  * "critical": 비판/분노 주류 (논란, 스캔들, 갑질)
+  * "divided": 찬반 갈림 (열애, 이적, 논쟁, 팬덤 갈등)
+  * "amused": 웃기거나 밈화 (예능, 에피소드, TMI)
+  * "neutral": 위 4가지 어디에도 해당 안 되는 순수 정보만
 - issue_tags: COMEBACK, CHART, AWARD, AGENCY, CONTRACT, CONTROVERSY, FANDOM, MILITARY, RELATIONSHIP, LEGAL, SOCIAL_MEDIA, PERFORMANCE, COLLABORATION, BRAND_DEAL, VARIETY_SHOW, WORLD_TOUR, DEBUT, DISBANDMENT, SOLO, OST 중 선택
-- artist_tags: 뉴스에 언급된 실제 아티스트/소속사 이름
-- safety_flag: 혐오/검증안된루머/사생활침해면 "blocked", 아니면 "safe"
-- importance_score: 1~10 (10이 가장 핫한 이슈)
-- 절대로 존재하지 않는 댓글이나 반응을 만들어내지 마라. 실제 데이터만 분석해라.
+- artist_tags: 공식 영어 이름 사용 (ARTIST NAME MAP 참고)
+- importance_score: 1~10. 7 이상이면 진짜 핫한 이슈만.
+- 절대 존재하지 않는 댓글이나 반응을 만들어내지 마라.
 ''', maxTokens: 1024);
 
     _summaryCache[contentHash] = result;
@@ -183,35 +195,55 @@ JSON으로 출력:
     required String koreanSummary,
     required String reactionTone,
     required List<Map<String, dynamic>> realComments,
+    required List<Map<String, dynamic>> blogReactions,
     required List<String> issueTags,
     required List<String> artistTags,
     required List<Map<String, String>> sources,
   }) async {
-    // 실제 댓글을 소스/좋아요와 함께 전달
     final hasComments = realComments.isNotEmpty;
     final reactionsStr = hasComments
         ? realComments.take(5).map((c) =>
             '- "${c['text']}" (${c['likes']} likes, from ${c['source']})').join('\n')
-        : 'No real user comments were collected for this article.';
+        : '';
+
+    final hasBlogReactions = blogReactions.isNotEmpty;
+    final blogStr = hasBlogReactions
+        ? blogReactions.take(8).map((r) =>
+            '- [${r['source']}] "${r['text']}"').join('\n')
+        : '';
+
+    final hasAnyReaction = hasComments || hasBlogReactions;
 
     final sourcesStr = sources
         .map((s) => '- ${s['title']}: ${s['url']}')
         .join('\n');
 
+    final nameMap = SourceCollector.buildNameMappingPrompt();
     _geminiCallCount++;
 
     final prompt = '''
-You are KOK's content writer — you translate Korean K-pop news for international fans.
+You are KOK's star writer — THE go-to voice for international K-pop fans who want the REAL Korean perspective. You write like a sharp, witty, bilingual insider who actually lives in Korea and breathes K-pop culture. Your writing is so good that fans screenshot and share your articles.
 
-Voice: witty, sharp, insider-tone. Like a bilingual Korean friend explaining what's going on.
+$nameMap
+
+---
+
+[YOUR WRITING STYLE]
+- Headlines that make people STOP scrolling. Use power words, tension, or intrigue. Never boring. Never generic.
+- "What happened" should read like a friend spilling the tea — concise but juicy. Include specific details that make it real.
+- "Why it matters" must connect to the BIGGER PICTURE — fandom dynamics, industry power moves, cultural shifts. Never just restate what happened.
+- "Korean reaction summary" is your signature section. Paint a VIVID picture of how Korean internet is reacting. Use specific community vibes: "Korean fans on TheQoo are torn between...", "Naver comment sections are flooded with...", "The general Korean public sentiment is shifting toward...". Make the reader FEEL the atmosphere.
+- "Context for fans" — drop genuine cultural knowledge bombs. Things that Korean fans instinctively understand but international fans would miss entirely.
+- Every sentence must earn its place. Cut filler. Maximize impact.
 
 ---
 
 [INPUT]
 Korean Summary: $koreanSummary
 Reaction Tone: $reactionTone
-${hasComments ? 'REAL collected comments (translate these faithfully):' : 'No real comments available for this article.'}
-$reactionsStr
+${hasComments ? 'REAL collected comments (translate these faithfully, preserve the raw energy):\n$reactionsStr' : ''}
+${hasBlogReactions ? 'Korean public reactions from blogs/communities (use these to write a VIVID korean_reaction_summary):\n$blogStr' : ''}
+${!hasAnyReaction ? 'No direct comments or reactions were collected. Write korean_reaction_summary by channeling how Korean communities (TheQoo, Nate Pann, DC Inside, Naver) would typically react to this type of news. Be specific about the community vibe, but do NOT fabricate exact quotes or numbers.' : ''}
 Tags: ${issueTags.join(', ')}
 Artists: ${artistTags.join(', ')}
 Sources:
@@ -221,32 +253,33 @@ $sourcesStr
 
 [OUTPUT — JSON]
 {
-  "issue_title_en": "Sharp headline, max 100 chars",
-  "issue_title_es": "Spanish version",
-  "what_happened_en": "What happened, max 350 chars",
-  "what_happened_es": "Spanish version",
-  "why_it_matters_en": "Why Koreans care, max 350 chars",
+  "issue_title_en": "Magnetic headline that hooks instantly. Use tension, stakes, or intrigue. Max 90 chars. NO generic titles like 'X makes waves' or 'X sparks buzz'.",
+  "issue_title_es": "Spanish — equally punchy, natural LatAm Gen-Z tone",
+  "what_happened_en": "The tea, served hot. Specific details, not vague summaries. Write like you're texting your best friend the breaking news. Max 350 chars.",
+  "what_happened_es": "Spanish version — same energy, natural flow",
+  "why_it_matters_en": "Connect to the bigger picture. Why should fans care beyond the surface? What does this mean for the group/industry/fandom? Max 350 chars.",
   "why_it_matters_es": "Spanish version",
-  "korean_reaction_summary_en": "Summary of Korean public reaction based on collected data, max 450 chars",
+  "korean_reaction_summary_en": "Paint the scene of Korean internet reacting. Be VIVID and SPECIFIC. Reference community vibes (not fabricated quotes). What's the dominant feeling? Any memorable takes? Is the mood shifting? Max 500 chars.",
   "korean_reaction_summary_es": "Spanish version",
-  ${hasComments ? '"top_reactions": [\n    {"content_en": "Faithful translation of the real comment above", "content_es": "Spanish", "likes": EXACT_NUMBER_FROM_INPUT, "source": "EXACT_SOURCE_FROM_INPUT"}\n  ],' : '"top_reactions": [],'}
-  "context_for_fans_en": "Cultural context international fans might miss, max 400 chars",
+  ${hasComments ? '"top_reactions": [\n    {"content_en": "Faithful translation preserving the commenter\'s raw voice and tone", "content_es": "Spanish", "likes": EXACT_NUMBER_FROM_INPUT, "source": "EXACT_SOURCE_FROM_INPUT"}\n  ],' : '"top_reactions": [],'}
+  "context_for_fans_en": "Cultural insider knowledge. Korean social norms, industry politics, historical context, or fan culture nuances that international fans genuinely wouldn't know. Make it enlightening. Max 400 chars.",
   "context_for_fans_es": "Spanish version",
   "sentiment": "$reactionTone"
 }
 
 ---
 
-CRITICAL RULES:
-1. top_reactions: ONLY translate the REAL comments provided above. Use the EXACT likes count and source from the input. DO NOT invent comments, likes, or sources.
-2. If no real comments were provided, return an EMPTY top_reactions array [].
-3. Do NOT fabricate any source names (no "Twitter", "TheQoo", etc. unless they appear in the input).
-4. Title: catchy but not clickbait.
-5. context_for_fans: explain Korean cultural nuances fans might miss.
-6. Spanish: natural Latin American Gen-Z tone, not Google Translate.
+HARD RULES (violating these = failed output):
+1. ARTIST NAMES: Use EXACT official English names from ARTIST NAME MAP. Never guess. Never transliterate.
+2. top_reactions: ONLY translate REAL comments provided above. EXACT likes + source. ZERO fabrication.
+3. No real comments provided → EMPTY top_reactions array [].
+4. NEVER fabricate quotes, numbers, or source names.
+5. NO filler phrases: "sparks buzz", "making waves", "takes the internet by storm", "fans are excited" — these are BANNED. Be specific instead.
+6. Spanish must sound like a real LatAm Gen-Z K-pop fan wrote it — NOT Google Translate.
+7. Every field must deliver genuine value. If you can't write something interesting, write something insightful.
 ''';
 
-    final result = await _ai.generateCardJson(prompt, maxTokens: 2048);
+    final result = await _ai.generateCardJson(prompt, maxTokens: 3000);
 
     final titleEn = result['issue_title_en'] as String? ?? '';
     final bodyEn = result['what_happened_en'] as String? ?? '';
@@ -333,10 +366,20 @@ CRITICAL RULES:
           rep['comment_data'] ?? [],
         );
 
+        // 블로그/카페에서 여론 반응 수집
+        List<Map<String, dynamic>> blogReactions = [];
+        try {
+          blogReactions = await SourceCollector().collectReactions(title);
+          debugPrint('[KOK Pipeline] Blog/Cafe reactions: ${blogReactions.length}');
+        } catch (e) {
+          debugPrint('[KOK Pipeline] Blog/Cafe collection failed: $e');
+        }
+
         final card = await generateCard(
           koreanSummary: summary['issue_summary_ko'] as String? ?? '',
           reactionTone: summary['reaction_tone'] as String? ?? 'neutral',
           realComments: realCommentData,
+          blogReactions: blogReactions,
           issueTags: List<String>.from(summary['issue_tags'] ?? []),
           artistTags: List<String>.from(summary['artist_tags'] ?? []),
           sources: sources,
@@ -347,9 +390,48 @@ CRITICAL RULES:
           continue;
         }
 
+        // ── Quality Gate: 허접한 게시물 차단 ──
+        final titleEn2 = (card['issue_title_en'] as String? ?? '').trim();
+        final whatEn = (card['what_happened_en'] as String? ?? '').trim();
+        final reactionEn = (card['korean_reaction_summary_en'] as String? ?? '').trim();
+        final totalSources = realCommentData.length + blogReactions.length;
+
+        if (titleEn2.length < 15) {
+          debugPrint('[KOK Pipeline] Quality gate: title too short ("$titleEn2")');
+          continue;
+        }
+        if (whatEn.length < 50) {
+          debugPrint('[KOK Pipeline] Quality gate: what_happened too thin (${whatEn.length} chars)');
+          continue;
+        }
+        if (reactionEn.length < 80) {
+          debugPrint('[KOK Pipeline] Quality gate: reaction summary too thin (${reactionEn.length} chars)');
+          continue;
+        }
+
+        // 최소 반응 소스 1개 이상 있어야 게시 (유저 경험 최우선)
+        if (totalSources == 0 && realCommentData.isEmpty && blogReactions.isEmpty) {
+          debugPrint('[KOK Pipeline] Quality gate: 0 sources — not publishing');
+          continue;
+        }
+
+        // 금지 표현 체크 (filler 문구)
+        final fillerPatterns = RegExp(
+          r'(sparks? buzz|mak(es?|ing) waves|takes? the internet by storm|breaks? the internet|fans are excited)',
+          caseSensitive: false,
+        );
+        if (fillerPatterns.hasMatch(titleEn2)) {
+          debugPrint('[KOK Pipeline] Quality gate: filler title ("$titleEn2")');
+          continue;
+        }
+
         card['issue_tags'] = summary['issue_tags'];
-        card['artist_tags'] = summary['artist_tags'];
-        card['reaction_sample_size'] = realCommentData.length;
+        // Groq가 한국어명을 반환할 수 있으므로 공식 영어명으로 변환
+        final rawArtistTags = List<String>.from(summary['artist_tags'] ?? []);
+        card['artist_tags'] = rawArtistTags
+            .map((tag) => SourceCollector.getOfficialName(tag))
+            .toList();
+        card['reaction_sample_size'] = realCommentData.length + blogReactions.length;
         card['original_sources'] = sources;
         card['safety_level'] = summary['safety_flag'];
 
@@ -363,6 +445,17 @@ CRITICAL RULES:
         }
         if (imageUrl.isNotEmpty) {
           card['image_url'] = imageUrl;
+        }
+
+        // 빈 콘텐츠 top_reactions 필터링
+        if (card['top_reactions'] is List) {
+          card['top_reactions'] = (card['top_reactions'] as List)
+              .where((r) {
+                final en = (r['content_en'] as String? ?? '').trim();
+                final es = (r['content_es'] as String? ?? '').trim();
+                return en.isNotEmpty || es.isNotEmpty;
+              })
+              .toList();
         }
 
         try {

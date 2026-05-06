@@ -81,6 +81,41 @@ class _FeedPageState extends State<FeedPage> {
     );
   }
 
+  Future<void> _confirmDeleteArticle(AppProvider provider, String articleId, String title) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: KokColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Delete article', style: TextStyle(color: KokColors.textPrimary, fontSize: 16)),
+        content: Text(
+          'Delete "$title"?',
+          style: const TextStyle(color: KokColors.textSecondary, fontSize: 13),
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: KokColors.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: KokColors.error, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await provider.adminDeleteArticle(articleId);
+    await provider.loadArticles();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Article deleted'), backgroundColor: KokColors.success),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
@@ -240,10 +275,30 @@ class _FeedPageState extends State<FeedPage> {
           final isLocked = !provider.isArticleUnlocked(article.id) &&
               !provider.canViewFree;
 
-          return NewsCard(
-            article: article,
-            isLocked: isLocked,
-            onTap: () => _onArticleTap(article.id),
+          return Stack(
+            children: [
+              NewsCard(
+                article: article,
+                isLocked: isLocked,
+                onTap: () => _onArticleTap(article.id),
+              ),
+              if (provider.isAdmin)
+                Positioned(
+                  top: 14,
+                  right: 28,
+                  child: GestureDetector(
+                    onTap: () => _confirmDeleteArticle(provider, article.id, article.issueTitle(provider.language)),
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withAlpha(160),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.delete_outline_rounded, size: 16, color: KokColors.error),
+                    ),
+                  ),
+                ),
+            ],
           );
         },
       ),
