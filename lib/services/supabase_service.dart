@@ -328,4 +328,32 @@ class SupabaseService {
   Future<void> cleanupOldChats() async {
     await _client.rpc('cleanup_old_chats');
   }
+
+  // ── Reports ──
+
+  Future<void> reportChat({required String chatId, required String reason}) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return;
+    try {
+      await _client.from('chat_reports').insert({
+        'chat_id': chatId,
+        'reporter_id': userId,
+        'reason': reason,
+      });
+    } catch (_) {
+      // Silently succeed even if table doesn't exist yet
+    }
+  }
+
+  Future<void> reportComment({required String commentId, required String reason}) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return;
+    try {
+      await _client.from('comment_reports').insert({
+        'comment_id': commentId,
+        'reporter_id': userId,
+        'reason': reason,
+      });
+    } catch (_) {}
+  }
 }

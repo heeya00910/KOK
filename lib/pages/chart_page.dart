@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/theme/app_theme.dart';
+import '../services/ad_service.dart';
 import '../services/supabase_service.dart';
 import '../widgets/artist_symbol.dart';
 import 'artist_chat_page.dart';
@@ -131,12 +132,10 @@ class _ChartPageState extends State<ChartPage> {
   }
 
   Future<void> _watchAdForVote() async {
-    // TODO: 실제 광고 SDK 연동 (AdMob rewarded ad)
-    // 지금은 시뮬레이션
     if (!mounted) return;
 
     final progress = _adWatchCount % 3 + 1;
-    showDialog(
+    final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
@@ -169,25 +168,11 @@ class _ChartPageState extends State<ChartPage> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
+            onPressed: () => Navigator.pop(ctx, false),
             child: Text('Cancel', style: TextStyle(color: KokColors.textMuted.withAlpha(180))),
           ),
           ElevatedButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              setState(() {
-                _adWatchCount++;
-                if (_adWatchCount % 3 == 0) {
-                  _maxVotes++;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('+1 bonus vote earned!'),
-                      backgroundColor: KokColors.success,
-                    ),
-                  );
-                }
-              });
-            },
+            onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: KokColors.accent,
               foregroundColor: Colors.white,
@@ -198,6 +183,28 @@ class _ChartPageState extends State<ChartPage> {
         ],
       ),
     );
+
+    if (confirmed != true || !mounted) return;
+
+    final success = await AdService().showRewardedAd(
+      onRewarded: () {
+        setState(() {
+          _adWatchCount++;
+          if (_adWatchCount % 3 == 0) {
+            _maxVotes++;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('+1 bonus vote earned!'), backgroundColor: KokColors.success),
+            );
+          }
+        });
+      },
+    );
+
+    if (!success && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ad not ready. Please try again.'), backgroundColor: KokColors.error),
+      );
+    }
   }
 
   @override

@@ -7,6 +7,7 @@ import '../models/user_profile.dart';
 import '../providers/app_provider.dart';
 import '../services/auth_service.dart';
 import '../widgets/language_toggle.dart';
+import 'legal_page.dart';
 import 'login_page.dart';
 
 class MyPage extends StatelessWidget {
@@ -752,7 +753,7 @@ class MyPage extends StatelessWidget {
                 children: [
                   const Icon(Icons.mail_outline_rounded, size: 16, color: KokColors.textMuted),
                   const SizedBox(width: 8),
-                  Text(email, style: const TextStyle(fontSize: 13, color: KokColors.textMuted)),
+                  Flexible(child: Text(email, style: const TextStyle(fontSize: 13, color: KokColors.textMuted), overflow: TextOverflow.ellipsis)),
                   if (provider.isAdmin) ...[
                     const SizedBox(width: 8),
                     Container(
@@ -768,6 +769,30 @@ class MyPage extends StatelessWidget {
                 ],
               ),
             ),
+          _buildAccountTile(
+            icon: Icons.description_outlined,
+            label: lang == 'es' ? 'Terminos de Servicio' : 'Terms of Service',
+            color: KokColors.textSecondary,
+            onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const LegalPage(type: LegalType.terms))),
+          ),
+          const SizedBox(height: 8),
+          _buildAccountTile(
+            icon: Icons.shield_outlined,
+            label: lang == 'es' ? 'Politica de Privacidad' : 'Privacy Policy',
+            color: KokColors.textSecondary,
+            onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const LegalPage(type: LegalType.privacy))),
+          ),
+          const SizedBox(height: 8),
+          _buildAccountTile(
+            icon: Icons.groups_outlined,
+            label: lang == 'es' ? 'Normas de la Comunidad' : 'Community Guidelines',
+            color: KokColors.textSecondary,
+            onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const LegalPage(type: LegalType.community))),
+          ),
+          const SizedBox(height: 16),
           _buildAccountTile(
             icon: Icons.logout_rounded,
             label: lang == 'es' ? 'Cerrar sesion' : 'Log out',

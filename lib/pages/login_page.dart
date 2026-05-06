@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../core/theme/app_theme.dart';
 import '../services/auth_service.dart';
 import 'home_shell.dart';
+import 'legal_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -177,15 +178,59 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
                     const SizedBox(height: 12),
                     _buildGoogleButton(),
                     const SizedBox(height: 28),
-                    Text(
-                      'By continuing, you agree to our Terms of Service\nand Privacy Policy',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w300,
-                        color: Colors.white.withAlpha(50),
-                        height: 1.5,
-                      ),
-                      textAlign: TextAlign.center,
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'By continuing, you agree to our ',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w300,
+                            color: Colors.white.withAlpha(50),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        GestureDetector(
+                          onTap: () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => const LegalPage(type: LegalType.terms))),
+                          child: Text(
+                            'Terms of Service',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.white.withAlpha(100),
+                              decoration: TextDecoration.underline,
+                              decorationColor: Colors.white.withAlpha(80),
+                            ),
+                          ),
+                        ),
+                        Text(
+                          ' and ',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w300,
+                            color: Colors.white.withAlpha(50),
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => const LegalPage(type: LegalType.privacy))),
+                          child: Text(
+                            'Privacy Policy',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.white.withAlpha(100),
+                              decoration: TextDecoration.underline,
+                              decorationColor: Colors.white.withAlpha(80),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const Spacer(flex: 1),
                   ],

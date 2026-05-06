@@ -467,3 +467,37 @@ BEGIN
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ═══════════════════════════════════
+-- 신고(Report) 시스템
+-- ═══════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS chat_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  chat_id UUID NOT NULL,
+  reporter_id UUID NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  reviewed BOOLEAN NOT NULL DEFAULT false
+);
+
+CREATE TABLE IF NOT EXISTS comment_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  comment_id TEXT NOT NULL,
+  reporter_id UUID NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  reviewed BOOLEAN NOT NULL DEFAULT false
+);
+
+ALTER TABLE chat_reports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE comment_reports ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users create chat reports') THEN
+    CREATE POLICY "Users create chat reports" ON chat_reports FOR INSERT WITH CHECK (auth.uid() = reporter_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users create comment reports') THEN
+    CREATE POLICY "Users create comment reports" ON comment_reports FOR INSERT WITH CHECK (auth.uid() = reporter_id);
+  END IF;
+END $$;

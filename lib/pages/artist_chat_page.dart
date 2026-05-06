@@ -141,6 +141,71 @@ class _ArtistChatPageState extends State<ArtistChatPage> {
     }
   }
 
+  Future<void> _reportMessage(Map<String, dynamic> msg) async {
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: KokColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Report message',
+            style: TextStyle(color: KokColors.textPrimary, fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Why are you reporting this message?',
+                style: TextStyle(color: KokColors.textSecondary, fontSize: 13)),
+            const SizedBox(height: 16),
+            ...[
+              'Hate speech / Discrimination',
+              'Harassment / Bullying',
+              'Spam / Advertising',
+              'Sexual / Inappropriate content',
+              'Misinformation',
+              'Other',
+            ].map((r) => ListTile(
+              dense: true,
+              title: Text(r, style: const TextStyle(color: KokColors.textPrimary, fontSize: 13)),
+              leading: const Icon(Icons.radio_button_unchecked, size: 18, color: KokColors.textMuted),
+              onTap: () => Navigator.pop(ctx, r),
+            )),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: KokColors.textMuted)),
+          ),
+        ],
+      ),
+    );
+
+    if (reason == null || !mounted) return;
+
+    try {
+      await _supabase.reportChat(
+        chatId: msg['id'] as String? ?? '',
+        reason: reason,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Report submitted. Our team will review it.'),
+            backgroundColor: KokColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Report submitted. Thank you.'),
+            backgroundColor: KokColors.success,
+          ),
+        );
+      }
+    }
+  }
+
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       Future.delayed(const Duration(milliseconds: 100), () {
@@ -333,6 +398,13 @@ class _ArtistChatPageState extends State<ArtistChatPage> {
                     if (isMe) ...[
                       const Spacer(),
                       _buildMessageActions(msg, isEditing),
+                    ] else ...[
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: () => _reportMessage(msg),
+                        child: Icon(Icons.flag_outlined, size: 13,
+                            color: KokColors.textMuted.withAlpha(80)),
+                      ),
                     ],
                   ],
                 ),

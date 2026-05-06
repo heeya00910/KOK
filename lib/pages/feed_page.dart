@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:provider/provider.dart';
 import '../core/theme/app_theme.dart';
 import '../providers/app_provider.dart';
+import '../services/ad_service.dart';
 import '../services/content_scheduler.dart';
 import '../widgets/language_toggle.dart';
 import '../widgets/tag_filter_bar.dart';
@@ -20,9 +22,25 @@ class FeedPage extends StatefulWidget {
 class _FeedPageState extends State<FeedPage> {
   final _scrollController = ScrollController();
   bool _isGenerating = false;
+  BannerAd? _bannerAd;
+  bool _isBannerReady = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _bannerAd = AdService().createBannerAd(
+      onLoaded: () {
+        if (mounted) setState(() => _isBannerReady = true);
+      },
+      onFailed: () {
+        if (mounted) setState(() => _isBannerReady = false);
+      },
+    )..load();
+  }
 
   @override
   void dispose() {
+    _bannerAd?.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -134,6 +152,13 @@ class _FeedPageState extends State<FeedPage> {
                   ? _buildLoadingState()
                   : _buildArticleList(provider),
             ),
+            if (_isBannerReady && _bannerAd != null && !provider.isAdmin)
+              Container(
+                width: _bannerAd!.size.width.toDouble(),
+                height: _bannerAd!.size.height.toDouble(),
+                color: KokColors.surface,
+                child: AdWidget(ad: _bannerAd!),
+              ),
           ],
         ),
       ),
