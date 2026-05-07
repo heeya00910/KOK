@@ -1257,7 +1257,7 @@ Return JSON only:
         model_versions: { cerebras: "llama3.1-8b", groq: "llama-3.3-70b", gemini: "gemini-2.0-flash-lite" },
       });
 
-      const cardImageUrl = await fetchArtistImage(tags);
+      const cardImageUrl = await fetchArtistImage(tags, c.main_title_ko);
 
       const { data: articleRow } = await sb.from("articles").insert({
         issue_title_en: card.title_en ?? "",
@@ -1698,56 +1698,65 @@ Create a brief keyword pulse summary. Return JSON only:
   return await callCerebras(prompt, 500);
 }
 
-// ── Artist image lookup ──
+// ── Content-aware image lookup ──
 
-const _imagePool: Record<string, string[]> = {};
-const _imageIdx: Record<string, number> = {};
+const _usedImageUrls = new Set<string>();
 
-async function fetchArtistImage(artists: string[]): Promise<string> {
-  if (!NAVER_CLIENT_ID || artists.length === 0) return "";
+async function fetchContentImage(artists: string[], topicHint?: string): Promise<string> {
+  if (!NAVER_CLIENT_ID) return "";
 
-  const mainArtist = artists[0];
+  const mainArtist = artists[0] ?? "";
+  const topic = (topicHint ?? "").replace(/[^\uAC00-\uD7AFa-zA-Z0-9\s]/g, "").trim();
 
-  if (!_imagePool[mainArtist]) {
+  const queries: string[] = [];
+  if (mainArtist && topic) {
+    queries.push(`${mainArtist} ${topic.slice(0, 15)}`);
+  }
+  if (mainArtist) {
+    const suffixes = ["무대", "화보", "활동", "공연", "스타일"];
+    queries.push(`${mainArtist} ${suffixes[Math.floor(Math.random() * suffixes.length)]}`);
+  }
+  if (topic) {
+    queries.push(`${topic.slice(0, 20)} 케이팝`);
+  }
+  if (queries.length === 0) queries.push("K-pop idol stage");
+
+  for (const query of queries) {
     try {
-      const queries = [
-        `${mainArtist} 아이돌`,
-        `${mainArtist} 무대`,
-        `${mainArtist} 화보`,
-      ];
-      const query = queries[Math.floor(Math.random() * queries.length)];
-      const url = `https://openapi.naver.com/v1/search/image?query=${encodeURIComponent(query)}&display=10&sort=sim&filter=large`;
+      const start = Math.floor(Math.random() * 3) + 1;
+      const url = `https://openapi.naver.com/v1/search/image?query=${encodeURIComponent(query)}&display=10&start=${start}&sort=sim&filter=large`;
       const res = await fetch(url, {
         headers: {
           "X-Naver-Client-Id": NAVER_CLIENT_ID,
           "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
         },
       });
-      if (!res.ok) return "";
+      if (!res.ok) continue;
       const data = await res.json();
       const items = data.items ?? [];
 
-      const safeImages = items
-        .filter((it: Record<string, string>) => {
-          const link = it.link ?? "";
-          return /\.(jpg|jpeg|png|webp)/i.test(link) && !/blog|cafe|tistory/i.test(link);
-        })
-        .map((it: Record<string, string>) => it.link);
+      const candidates = items
+        .map((it: Record<string, string>) => it.link ?? "")
+        .filter((link: string) =>
+          /\.(jpg|jpeg|png|webp)/i.test(link) &&
+          !/blog|cafe|tistory|dcinside/i.test(link) &&
+          !_usedImageUrls.has(link)
+        );
 
-      _imagePool[mainArtist] = safeImages.length > 0 ? safeImages : items.slice(0, 5).map((it: Record<string, string>) => it.link ?? "");
-      _imageIdx[mainArtist] = 0;
+      if (candidates.length > 0) {
+        const pick = candidates[Math.floor(Math.random() * Math.min(candidates.length, 5))];
+        _usedImageUrls.add(pick);
+        return pick;
+      }
     } catch (e) {
-      console.error("[artist_image]", e);
-      return "";
+      console.error("[content_image]", e);
     }
   }
+  return "";
+}
 
-  const pool = _imagePool[mainArtist] ?? [];
-  if (pool.length === 0) return "";
-
-  const idx = (_imageIdx[mainArtist] ?? 0) % pool.length;
-  _imageIdx[mainArtist] = idx + 1;
-  return pool[idx] ?? "";
+async function fetchArtistImage(artists: string[], topicHint?: string): Promise<string> {
+  return fetchContentImage(artists, topicHint);
 }
 
 // ── Insert helper ──
@@ -1775,7 +1784,8 @@ async function insertSupplementaryArticle(
   const reactionSummaryEs = (data.korean_reaction_point_es ?? data.mood_summary_es ??
     data.performance_focus_es ?? data.why_it_is_being_noticed_es ?? bodyEs) as string;
 
-  const imageUrl = await fetchArtistImage(artists);
+  const topicHint = (data.title_en as string) ?? cluster?.main_title_ko ?? "";
+  const imageUrl = await fetchArtistImage(artists, topicHint);
 
   const { title_en, title_es, sentiment: _s, artist_tags: _a, ...extraFields } = data;
 

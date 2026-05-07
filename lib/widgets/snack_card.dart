@@ -37,7 +37,7 @@ class SnackCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: KokColors.cardBg,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: KokColors.border, width: 0.5),
+          border: Border.all(color: badgeColor.withAlpha(60), width: 0.8),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -52,7 +52,7 @@ class SnackCard extends StatelessWidget {
                   if (!hasImage) const SizedBox(height: 8),
                   ..._buildBody(lang),
                   const SizedBox(height: 8),
-                  _buildTimeFooter(lang),
+                  _buildFooter(lang, badgeColor),
                 ],
               ),
             ),
@@ -107,7 +107,7 @@ class SnackCard extends StatelessWidget {
     );
   }
 
-  Widget _buildTimeFooter(String lang) {
+  Widget _buildFooter(String lang, Color accentColor) {
     final diff = DateTime.now().difference(article.publishedAt);
     String ago;
     if (diff.inDays > 0) {
@@ -118,9 +118,24 @@ class SnackCard extends StatelessWidget {
       final m = diff.inMinutes.clamp(1, 59);
       ago = lang == 'es' ? 'hace ${m}m' : '${m}m ago';
     }
-    return Text(
-      ago,
-      style: const TextStyle(fontSize: 10, color: KokColors.textMuted),
+    return Row(
+      children: [
+        Icon(Icons.schedule_rounded, size: 12, color: KokColors.textMuted.withAlpha(150)),
+        const SizedBox(width: 3),
+        Text(ago, style: const TextStyle(fontSize: 10, color: KokColors.textMuted)),
+        if (article.artistTags.isNotEmpty) ...[
+          const SizedBox(width: 10),
+          ...article.artistTags.take(2).map((tag) => Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: Text(
+              '#$tag',
+              style: TextStyle(fontSize: 10, color: accentColor.withAlpha(180), fontWeight: FontWeight.w600),
+            ),
+          )),
+        ],
+        const Spacer(),
+        Icon(Icons.arrow_forward_ios_rounded, size: 10, color: KokColors.textMuted.withAlpha(80)),
+      ],
     );
   }
 
@@ -193,40 +208,48 @@ class SnackCard extends StatelessWidget {
       _title(lang),
       const SizedBox(height: 8),
       Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             child: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: KokColors.surfaceLight,
+                color: KokColors.success.withAlpha(12),
                 borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: KokColors.success.withAlpha(30)),
               ),
-              child: Text(
-                sideA,
-                style: const TextStyle(fontSize: 11, color: KokColors.textSecondary, height: 1.3),
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    lang == 'es' ? 'Algunos dicen...' : 'Some say...',
+                    style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: KokColors.success.withAlpha(200)),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(sideA, style: const TextStyle(fontSize: 11, color: KokColors.textSecondary, height: 1.3), maxLines: 4, overflow: TextOverflow.ellipsis),
+                ],
               ),
             ),
           ),
-          Container(
-            width: 1,
-            height: 40,
-            margin: const EdgeInsets.symmetric(horizontal: 6),
-            color: KokColors.border,
-          ),
+          const SizedBox(width: 6),
           Expanded(
             child: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: KokColors.surfaceLight,
+                color: KokColors.warning.withAlpha(12),
                 borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: KokColors.warning.withAlpha(30)),
               ),
-              child: Text(
-                sideB,
-                style: const TextStyle(fontSize: 11, color: KokColors.textSecondary, height: 1.3),
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    lang == 'es' ? 'Otros dicen...' : 'Others say...',
+                    style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: KokColors.warning.withAlpha(200)),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(sideB, style: const TextStyle(fontSize: 11, color: KokColors.textSecondary, height: 1.3), maxLines: 4, overflow: TextOverflow.ellipsis),
+                ],
               ),
             ),
           ),
@@ -438,12 +461,14 @@ class SnackCard extends StatelessWidget {
     return [
       Text(
         prefix,
-        style: const TextStyle(
-          fontSize: 12,
+        style: TextStyle(
+          fontSize: 11,
           fontStyle: FontStyle.italic,
-          color: KokColors.textMuted,
+          color: KokColors.textMuted.withAlpha(180),
         ),
       ),
+      const SizedBox(height: 4),
+      _title(lang),
       if (observation.isNotEmpty) ...[
         const SizedBox(height: 6),
         Text(
@@ -455,11 +480,26 @@ class SnackCard extends StatelessWidget {
       ],
       if (caution.isNotEmpty) ...[
         const SizedBox(height: 6),
-        Text(
-          caution,
-          style: const TextStyle(fontSize: 10, color: KokColors.textMuted, height: 1.3),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: KokColors.textMuted.withAlpha(10),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline_rounded, size: 12, color: KokColors.textMuted.withAlpha(120)),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  caution,
+                  style: const TextStyle(fontSize: 10, color: KokColors.textMuted, height: 1.3),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     ];
