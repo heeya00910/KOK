@@ -1399,32 +1399,37 @@ async function callCerebras(prompt: string, maxTokens = 600): Promise<Record<str
 function selectSupplementaryType(
   cluster: ClusterRow,
   reactions: ReactionRow[],
+  usedTypes: Set<string>,
 ): SupplementaryType | null {
-  const sources = (cluster.source_item_ids ?? []) as string[];
-  const hasYoutube = (cluster as Record<string, unknown>).source_type === "youtube" ||
-    sources.some(s => s.includes("youtube"));
-  const isPerformance = /무대|직캠|fancam|stage|performance|댄스|dance/i.test(cluster.main_title_ko);
+  const sourceTypes = (cluster.source_types ?? []) as string[];
+  const hasYoutube = sourceTypes.some(s => s.startsWith("youtube")) ||
+    ((cluster.youtube_video_count as number) ?? 0) > 0;
+  const isPerformance = /무대|직캠|fancam|stage|performance|댄스|dance|컴백|comeback/i.test(cluster.main_title_ko);
   if (hasYoutube && isPerformance) return "STAGE_REACTION_SNACK";
 
-  const themes = new Set(reactions.map(r => r.source_name));
-  const sentiments = new Set(reactions.map(r => {
+  const sentimentBuckets = { amused: 0, critical: 0, supportive: 0 };
+  for (const r of reactions) {
     const text = r.original_text_ko ?? "";
-    if (/ㅋㅋ|웃|재밌|ㅎㅎ/.test(text)) return "amused";
-    if (/별로|싫|짜증|화나|실망/.test(text)) return "critical";
-    return "neutral";
-  }));
-  if (themes.size >= 2 && sentiments.size >= 2 && reactions.length >= 8) return "REACTION_SPLIT";
+    if (/ㅋㅋ|웃|재밌|ㅎㅎ|귀엽/.test(text)) sentimentBuckets.amused++;
+    else if (/별로|싫|짜증|화나|실망|아쉽|왜/.test(text)) sentimentBuckets.critical++;
+    else if (/좋|최고|대박|멋|잘/.test(text)) sentimentBuckets.supportive++;
+  }
+  const hasDivision = sentimentBuckets.critical >= 2 && sentimentBuckets.supportive >= 2;
+  if (hasDivision && reactions.length >= 8 && !usedTypes.has("REACTION_SPLIT")) return "REACTION_SPLIT";
 
   const qualityReactions = reactions.filter(r => (r.original_text_ko?.length ?? 0) >= 10);
-  if (qualityReactions.length >= 15) return "KOREAN_COMMENT_MOOD";
-  if (qualityReactions.length >= 8) return "KOREAN_COMMENT_MOOD";
 
-  if ((cluster.reaction_strength ?? 0) >= 45 &&
-      (cluster.legal_risk_score ?? 100) < 25 &&
-      (cluster.noise_score ?? 100) < 55) return "KOREAN_BUZZ_SNACK";
+  if (qualityReactions.length >= 12 && !usedTypes.has("KOREAN_COMMENT_MOOD")) return "KOREAN_COMMENT_MOOD";
 
-  if ((cluster.reaction_strength ?? 0) >= 40 &&
-      (cluster.legal_risk_score ?? 100) < 20) return "NOT_A_BIG_ISSUE_BUT";
+  const sourceCount = cluster.source_count ?? 0;
+  const noiseOk = (cluster.noise_score ?? 0) < 55;
+  const legalOk = (cluster.legal_risk_score ?? 0) < 25;
+
+  if (sourceCount >= 2 && noiseOk && legalOk && !usedTypes.has("KOREAN_BUZZ_SNACK")) return "KOREAN_BUZZ_SNACK";
+
+  if (qualityReactions.length >= 3 && noiseOk && legalOk) return "KOREAN_BUZZ_SNACK";
+
+  if (noiseOk && (cluster.legal_risk_score ?? 0) < 20) return "NOT_A_BIG_ISSUE_BUT";
 
   return null;
 }
@@ -1695,39 +1700,54 @@ Create a brief keyword pulse summary. Return JSON only:
 
 // ── Artist image lookup ──
 
-const _imageCache: Record<string, string> = {};
+const _imagePool: Record<string, string[]> = {};
+const _imageIdx: Record<string, number> = {};
 
 async function fetchArtistImage(artists: string[]): Promise<string> {
   if (!NAVER_CLIENT_ID || artists.length === 0) return "";
 
   const mainArtist = artists[0];
-  if (_imageCache[mainArtist]) return _imageCache[mainArtist];
 
-  try {
-    const query = `${mainArtist} 아이돌 프로필`;
-    const url = `https://openapi.naver.com/v1/search/image?query=${encodeURIComponent(query)}&display=5&sort=sim&filter=large`;
-    const res = await fetch(url, {
-      headers: {
-        "X-Naver-Client-Id": NAVER_CLIENT_ID,
-        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
-      },
-    });
-    if (!res.ok) return "";
-    const data = await res.json();
-    const items = data.items ?? [];
+  if (!_imagePool[mainArtist]) {
+    try {
+      const queries = [
+        `${mainArtist} 아이돌`,
+        `${mainArtist} 무대`,
+        `${mainArtist} 화보`,
+      ];
+      const query = queries[Math.floor(Math.random() * queries.length)];
+      const url = `https://openapi.naver.com/v1/search/image?query=${encodeURIComponent(query)}&display=10&sort=sim&filter=large`;
+      const res = await fetch(url, {
+        headers: {
+          "X-Naver-Client-Id": NAVER_CLIENT_ID,
+          "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+        },
+      });
+      if (!res.ok) return "";
+      const data = await res.json();
+      const items = data.items ?? [];
 
-    const safe = items.find((it: Record<string, string>) => {
-      const link = it.link ?? "";
-      return /\.(jpg|jpeg|png|webp)/i.test(link) && !/blog|cafe|tistory/i.test(link);
-    }) ?? items[0];
+      const safeImages = items
+        .filter((it: Record<string, string>) => {
+          const link = it.link ?? "";
+          return /\.(jpg|jpeg|png|webp)/i.test(link) && !/blog|cafe|tistory/i.test(link);
+        })
+        .map((it: Record<string, string>) => it.link);
 
-    const imageUrl = safe?.link ?? "";
-    if (imageUrl) _imageCache[mainArtist] = imageUrl;
-    return imageUrl;
-  } catch (e) {
-    console.error("[artist_image]", e);
-    return "";
+      _imagePool[mainArtist] = safeImages.length > 0 ? safeImages : items.slice(0, 5).map((it: Record<string, string>) => it.link ?? "");
+      _imageIdx[mainArtist] = 0;
+    } catch (e) {
+      console.error("[artist_image]", e);
+      return "";
+    }
   }
+
+  const pool = _imagePool[mainArtist] ?? [];
+  if (pool.length === 0) return "";
+
+  const idx = (_imageIdx[mainArtist] ?? 0) % pool.length;
+  _imageIdx[mainArtist] = idx + 1;
+  return pool[idx] ?? "";
 }
 
 // ── Insert helper ──
@@ -1866,18 +1886,34 @@ async function generateSupplementary(): Promise<number> {
   const { data: budget } = await sb.rpc("check_ai_budget", { p_provider: "cerebras" });
   if (!budget) return 0;
 
+  const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
   const { data: usedArticles } = await sb.from("articles")
-    .select("source_url_hash")
-    .not("source_url_hash", "is", null)
-    .gte("published_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
-  const usedHashes = new Set((usedArticles ?? []).map(a => a.source_url_hash));
+    .select("source_url_hash, content_type, issue_title_en")
+    .gte("published_at", sixHoursAgo);
+
+  const usedHashes = new Set<string>();
+  const usedTitles = new Set<string>();
+  const recentTypeCounts: Record<string, number> = {};
+  for (const a of usedArticles ?? []) {
+    if (a.source_url_hash) usedHashes.add(a.source_url_hash);
+    if (a.issue_title_en) usedTitles.add(a.issue_title_en.toLowerCase().slice(0, 30));
+    recentTypeCounts[a.content_type] = (recentTypeCounts[a.content_type] ?? 0) + 1;
+  }
+
+  const TYPE_LIMITS: Record<string, number> = {
+    KOREAN_BUZZ_SNACK: 4,
+    REACTION_SPLIT: 2,
+    KOREAN_COMMENT_MOOD: 2,
+    STAGE_REACTION_SNACK: 2,
+    NOT_A_BIG_ISSUE_BUT: 2,
+  };
 
   const { data: clusters } = await sb.from("issue_clusters")
     .select("*")
     .in("status", ["candidate", "keep", "pending_more_signals", "manual_review"])
     .lt("legal_risk_score", 25)
     .lt("noise_score", 55)
-    .order("reaction_strength", { ascending: false })
+    .order("trend_score", { ascending: false })
     .limit(30);
 
   if (!clusters || clusters.length === 0) {
@@ -1886,15 +1922,21 @@ async function generateSupplementary(): Promise<number> {
   }
 
   const qualifying = (clusters as ClusterRow[]).filter(c =>
-    (c.publish_score ?? 0) < 30 || !["published", "ready_for_generation"].includes(c.status)
+    !["published", "ready_for_generation"].includes(c.status)
   );
 
   let generated = 0;
-  const MAX_SUPPLEMENTARY = 8;
+  const MAX_SUPPLEMENTARY = 6;
+  const usedTypes = new Set<string>();
 
   for (const cluster of qualifying) {
     if (generated >= MAX_SUPPLEMENTARY) break;
-    if (cluster.source_url_hash && usedHashes.has(cluster.source_url_hash)) continue;
+
+    const clusterKey = cluster.cluster_key ?? cluster.id;
+    if (usedHashes.has(clusterKey)) continue;
+
+    const titlePrefix = (cluster.main_title_ko ?? "").slice(0, 20);
+    if (usedTitles.has(titlePrefix.toLowerCase())) continue;
 
     const { data: reactions } = await sb.from("raw_reaction_items")
       .select("*")
@@ -1904,8 +1946,11 @@ async function generateSupplementary(): Promise<number> {
 
     if (!reactions || reactions.length < 3) continue;
 
-    const contentType = selectSupplementaryType(cluster, reactions as ReactionRow[]);
+    const contentType = selectSupplementaryType(cluster, reactions as ReactionRow[], usedTypes);
     if (!contentType) continue;
+
+    const typeLimit = TYPE_LIMITS[contentType] ?? 2;
+    if ((recentTypeCounts[contentType] ?? 0) >= typeLimit) continue;
 
     const gen = GENERATORS[contentType];
 
@@ -1923,7 +1968,10 @@ async function generateSupplementary(): Promise<number> {
         cluster,
       );
 
+      usedTypes.add(contentType);
+      recentTypeCounts[contentType] = (recentTypeCounts[contentType] ?? 0) + 1;
       if (cluster.source_url_hash) usedHashes.add(cluster.source_url_hash);
+      usedHashes.add(clusterKey);
       await sb.rpc("increment_ai_usage", { p_provider: "cerebras", p_tokens: gen.tokenCost });
       generated++;
       await new Promise(r => setTimeout(r, 1000));
