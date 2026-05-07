@@ -1257,6 +1257,8 @@ Return JSON only:
         model_versions: { cerebras: "llama3.1-8b", groq: "llama-3.3-70b", gemini: "gemini-2.0-flash-lite" },
       });
 
+      const cardImageUrl = await fetchArtistImage(tags);
+
       const { data: articleRow } = await sb.from("articles").insert({
         issue_title_en: card.title_en ?? "",
         issue_title_es: card.title_es ?? "",
@@ -1268,11 +1270,16 @@ Return JSON only:
         korean_reaction_summary_es: card.korean_reaction_summary_es ?? "",
         context_for_fans_en: card.context_for_global_fans_en ?? "",
         context_for_fans_es: card.context_for_global_fans_es ?? "",
+        image_url: cardImageUrl,
         issue_tags: [issueType],
         artist_tags: tags,
         sentiment: card.reaction_tone ?? "mixed",
         reaction_sample_size: (reactions ?? []).length,
-        content_type: "card",
+        content_type: "KOK_ISSUE_CARD",
+        content_tier: "heavy",
+        label_en: "Issue",
+        label_es: "Tema",
+        confidence_level: "high",
         published_at: now,
       }).select("id").single();
 
