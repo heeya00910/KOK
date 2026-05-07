@@ -1686,6 +1686,43 @@ Create a brief keyword pulse summary. Return JSON only:
   return await callCerebras(prompt, 500);
 }
 
+// ── Artist image lookup ──
+
+const _imageCache: Record<string, string> = {};
+
+async function fetchArtistImage(artists: string[]): Promise<string> {
+  if (!NAVER_CLIENT_ID || artists.length === 0) return "";
+
+  const mainArtist = artists[0];
+  if (_imageCache[mainArtist]) return _imageCache[mainArtist];
+
+  try {
+    const query = `${mainArtist} 아이돌 프로필`;
+    const url = `https://openapi.naver.com/v1/search/image?query=${encodeURIComponent(query)}&display=5&sort=sim&filter=large`;
+    const res = await fetch(url, {
+      headers: {
+        "X-Naver-Client-Id": NAVER_CLIENT_ID,
+        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+      },
+    });
+    if (!res.ok) return "";
+    const data = await res.json();
+    const items = data.items ?? [];
+
+    const safe = items.find((it: Record<string, string>) => {
+      const link = it.link ?? "";
+      return /\.(jpg|jpeg|png|webp)/i.test(link) && !/blog|cafe|tistory/i.test(link);
+    }) ?? items[0];
+
+    const imageUrl = safe?.link ?? "";
+    if (imageUrl) _imageCache[mainArtist] = imageUrl;
+    return imageUrl;
+  } catch (e) {
+    console.error("[artist_image]", e);
+    return "";
+  }
+}
+
 // ── Insert helper ──
 
 async function insertSupplementaryArticle(
@@ -1711,6 +1748,8 @@ async function insertSupplementaryArticle(
   const reactionSummaryEs = (data.korean_reaction_point_es ?? data.mood_summary_es ??
     data.performance_focus_es ?? data.why_it_is_being_noticed_es ?? bodyEs) as string;
 
+  const imageUrl = await fetchArtistImage(artists);
+
   const { title_en, title_es, sentiment: _s, artist_tags: _a, ...extraFields } = data;
 
   const { data: articleRow } = await sb.from("articles").insert({
@@ -1724,6 +1763,7 @@ async function insertSupplementaryArticle(
     korean_reaction_summary_es: reactionSummaryEs,
     context_for_fans_en: "",
     context_for_fans_es: "",
+    image_url: imageUrl,
     issue_tags: [contentType],
     artist_tags: artists,
     sentiment,
@@ -1743,15 +1783,48 @@ async function insertSupplementaryArticle(
       .sort((a, b) => (b.like_count ?? 0) - (a.like_count ?? 0))
       .slice(0, 5);
 
-    const reactionRows = topReactions.map((r) => ({
+    const translated = await translateReactions(topReactions);
+
+    const reactionRows = topReactions.map((r, i) => ({
       article_id: articleRow.id,
-      content_en: r.original_text_ko,
-      content_es: r.original_text_ko,
+      content_en: translated[i]?.en ?? r.original_text_ko,
+      content_es: translated[i]?.es ?? r.original_text_ko,
       likes: r.like_count ?? 0,
       source: r.source_name,
     }));
     await sb.from("top_reactions").insert(reactionRows);
   }
+}
+
+async function translateReactions(
+  reactions: ReactionRow[],
+): Promise<Array<{ en: string; es: string }>> {
+  if (reactions.length === 0) return [];
+
+  const koTexts = reactions.map((r, i) => `${i + 1}. "${r.original_text_ko}"`).join("\n");
+
+  const prompt = `Translate and lightly paraphrase these Korean online comments into English and Spanish.
+
+RULES:
+- Paraphrase, do NOT translate word-for-word
+- Soften profanity and slang but keep the original energy and humor
+- Use natural fan community language
+- Filter out slurs, hate speech, or personal attacks — rephrase them as mild observations
+- Keep each translation short (1-2 sentences max)
+- Frame as "A user said..." or "One comment noted..." if needed for safety
+
+Korean comments:
+${koTexts}
+
+Return JSON array only, same order:
+[{"en":"English version","es":"Spanish version"},...]`;
+
+  const result = await callCerebras(prompt, 500);
+  if (!result) return reactions.map(() => ({ en: "", es: "" }));
+
+  if (Array.isArray(result)) return result as Array<{ en: string; es: string }>;
+
+  return reactions.map(() => ({ en: "", es: "" }));
 }
 
 // ── Content type → generator mapping ──

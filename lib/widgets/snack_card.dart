@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import '../core/theme/app_theme.dart';
 import '../models/news_article.dart';
@@ -27,11 +28,12 @@ class SnackCard extends StatelessWidget {
     final badgeColor = meta?.$1 ?? KokColors.textMuted;
     final badgeLabel = lang == 'es' ? (meta?.$3 ?? '') : (meta?.$2 ?? '');
 
+    final hasImage = article.imageUrl.isNotEmpty && article.imageUrl.startsWith('http');
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: KokColors.cardBg,
           borderRadius: BorderRadius.circular(12),
@@ -40,14 +42,49 @@ class SnackCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildBadge(badgeLabel, badgeColor),
-            const SizedBox(height: 8),
-            ..._buildBody(lang),
-            const SizedBox(height: 8),
-            _buildTimeFooter(lang),
+            if (hasImage) _buildCompactImage(badgeLabel, badgeColor),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (!hasImage) _buildBadge(badgeLabel, badgeColor),
+                  if (!hasImage) const SizedBox(height: 8),
+                  ..._buildBody(lang),
+                  const SizedBox(height: 8),
+                  _buildTimeFooter(lang),
+                ],
+              ),
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildCompactImage(String badgeLabel, Color badgeColor) {
+    return Stack(
+      children: [
+        ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+          child: CachedNetworkImage(
+            imageUrl: article.imageUrl,
+            height: 120,
+            width: double.infinity,
+            fit: BoxFit.cover,
+            placeholder: (_, __) => Container(
+              height: 120,
+              color: KokColors.surfaceLight,
+            ),
+            errorWidget: (_, __, ___) => const SizedBox.shrink(),
+          ),
+        ),
+        Positioned(
+          top: 8,
+          left: 8,
+          child: _buildBadge(badgeLabel, badgeColor),
+        ),
+      ],
     );
   }
 
