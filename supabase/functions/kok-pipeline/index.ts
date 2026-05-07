@@ -1824,8 +1824,8 @@ async function insertSupplementaryArticle(
 
     const reactionRows = topReactions.map((r, i) => ({
       article_id: articleRow.id,
-      content_en: translated[i]?.en ?? r.original_text_ko,
-      content_es: translated[i]?.es ?? r.original_text_ko,
+      content_en: translated[i]?.en || r.original_text_ko || "",
+      content_es: translated[i]?.es || r.original_text_ko || "",
       likes: r.like_count ?? 0,
       source: r.source_name,
     }));
@@ -1843,25 +1843,55 @@ async function translateReactions(
   const prompt = `Translate and lightly paraphrase these Korean online comments into English and Spanish.
 
 RULES:
-- Paraphrase, do NOT translate word-for-word
-- Soften profanity and slang but keep the original energy and humor
+- Paraphrase naturally, do NOT translate word-for-word
+- Keep the original energy, humor, and spiciness of Korean netizen culture
+- Soften extreme profanity but preserve the attitude and tone
 - Use natural fan community language
-- Filter out slurs, hate speech, or personal attacks — rephrase them as mild observations
+- Filter out slurs, hate speech, or direct personal attacks — rephrase them as pointed observations
 - Keep each translation short (1-2 sentences max)
-- Frame as "A user said..." or "One comment noted..." if needed for safety
 
 Korean comments:
 ${koTexts}
 
-Return JSON array only, same order:
+Return ONLY a JSON array, same order, no wrapping object:
 [{"en":"English version","es":"Spanish version"},...]`;
 
-  const result = await callCerebras(prompt, 500);
-  if (!result) return reactions.map(() => ({ en: "", es: "" }));
+  try {
+    const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${CEREBRAS_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "llama3.1-8b",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 800,
+        temperature: 0.5,
+      }),
+    });
+    if (!res.ok) {
+      console.error(`[translateReactions] HTTP ${res.status}`);
+      return reactions.map((r) => ({ en: r.original_text_ko ?? "", es: r.original_text_ko ?? "" }));
+    }
+    const data = await res.json();
+    let text = data.choices?.[0]?.message?.content ?? "";
+    text = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
 
-  if (Array.isArray(result)) return result as Array<{ en: string; es: string }>;
+    const parsed = JSON.parse(text);
 
-  return reactions.map(() => ({ en: "", es: "" }));
+    if (Array.isArray(parsed)) return parsed as Array<{ en: string; es: string }>;
+
+    if (typeof parsed === "object" && parsed !== null) {
+      for (const v of Object.values(parsed)) {
+        if (Array.isArray(v)) return v as Array<{ en: string; es: string }>;
+      }
+    }
+  } catch (e) {
+    console.error("[translateReactions_error]", e);
+  }
+
+  return reactions.map((r) => ({ en: r.original_text_ko ?? "", es: r.original_text_ko ?? "" }));
 }
 
 // ── Content type → generator mapping ──
