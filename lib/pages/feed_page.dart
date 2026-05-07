@@ -261,9 +261,29 @@ class _FeedPageState extends State<FeedPage> {
               !provider.canViewFree;
 
           if (article.isSnack) {
-            return SnackCard(
-              article: article,
-              onTap: () => _onArticleTap(article.id),
+            return Stack(
+              children: [
+                SnackCard(
+                  article: article,
+                  onTap: () => _onArticleTap(article.id),
+                ),
+                if (provider.isAdmin)
+                  Positioned(
+                    top: 8,
+                    right: 28,
+                    child: GestureDetector(
+                      onTap: () => _confirmDeleteArticle(provider, article.id, article.issueTitle(provider.language)),
+                      child: Container(
+                        padding: const EdgeInsets.all(5),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withAlpha(160),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Icon(Icons.delete_outline_rounded, size: 14, color: KokColors.error),
+                      ),
+                    ),
+                  ),
+              ],
             );
           }
 

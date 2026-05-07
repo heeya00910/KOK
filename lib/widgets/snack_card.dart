@@ -290,26 +290,9 @@ class SnackCard extends StatelessWidget {
           ),
         ),
       ],
-      if (positive != null && critical != null) ...[
+      if (dist != null) ...[
         const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: SizedBox(
-            height: 6,
-            child: Row(
-              children: [
-                Expanded(
-                  flex: positive.round().clamp(1, 100),
-                  child: Container(color: KokColors.success),
-                ),
-                Expanded(
-                  flex: (100 - positive.round()).clamp(1, 100),
-                  child: Container(color: KokColors.error),
-                ),
-              ],
-            ),
-          ),
-        ),
+        _buildMiniMoodBars(dist),
       ],
       if (summary.isNotEmpty) ...[
         const SizedBox(height: 6),
@@ -449,6 +432,50 @@ class SnackCard extends StatelessWidget {
         ),
       ],
     ];
+  }
+
+  Widget _buildMiniMoodBars(Map<String, dynamic> dist) {
+    final entries = dist.entries
+        .where((e) => (e.value as num? ?? 0) > 0)
+        .toList()
+      ..sort((a, b) => ((b.value as num?) ?? 0).compareTo((a.value as num?) ?? 0));
+
+    return Column(
+      children: entries.take(3).map((e) {
+        final pct = (e.value as num?)?.toInt() ?? 0;
+        final c = _moodColor(e.key);
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 3),
+          child: Row(children: [
+            SizedBox(width: 50, child: Text(e.key, style: TextStyle(fontSize: 9, color: c, fontWeight: FontWeight.w600))),
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: SizedBox(
+                  height: 5,
+                  child: Stack(children: [
+                    Container(color: KokColors.surfaceLight),
+                    FractionallySizedBox(widthFactor: pct / 100, child: Container(color: c)),
+                  ]),
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text('$pct%', style: const TextStyle(fontSize: 9, color: KokColors.textMuted)),
+          ]),
+        );
+      }).toList(),
+    );
+  }
+
+  static Color _moodColor(String key) {
+    return switch (key.toLowerCase()) {
+      'positive' || 'supportive' => KokColors.success,
+      'amused' => const Color(0xFFFFB74D),
+      'curious' => KokColors.accent,
+      'critical' || 'negative' => KokColors.error,
+      _ => KokColors.warning,
+    };
   }
 
   List<Widget> _notBigIssue(String lang) {

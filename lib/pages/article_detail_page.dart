@@ -48,25 +48,9 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                     _buildMeta(lang),
                     _buildIssueTitle(lang),
                     _sectionDivider(),
-                    _buildSection(
-                      icon: Icons.article_rounded,
-                      title: lang == 'es' ? 'Qu\u00e9 pas\u00f3' : 'What happened',
-                      body: _a.whatHappened(lang),
-                    ),
-                    _sectionDivider(),
-                    _buildSection(
-                      icon: Icons.flag_rounded,
-                      title: lang == 'es' ? 'Por qu\u00e9 importa en Corea' : 'Why it matters in Korea',
-                      body: _a.whyItMatters(lang),
-                    ),
-                    _sectionDivider(),
-                    _buildKoreanReaction(lang),
+                    ..._buildContentBody(lang),
                     _sectionDivider(),
                     _buildTopReactions(lang),
-                    _sectionDivider(),
-                    _buildContextForFans(lang),
-                    _sectionDivider(),
-                    _buildOriginalSources(lang),
                     _sectionDivider(),
                     _buildUserComments(provider, lang),
                     const SizedBox(height: 80),
@@ -227,6 +211,296 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
         ),
       ),
     );
+  }
+
+  // ── Content type routing ──
+
+  List<Widget> _buildContentBody(String lang) {
+    return switch (_a.contentType) {
+      'KOREAN_BUZZ_SNACK' => _bodyBuzzSnack(lang),
+      'REACTION_SPLIT' => _bodyReactionSplit(lang),
+      'KOREAN_COMMENT_MOOD' => _bodyCommentMood(lang),
+      'STAGE_REACTION_SNACK' => _bodyStageReaction(lang),
+      'KEYWORD_PULSE' => _bodyKeywordPulse(lang),
+      'WHY_KOREANS_CARE' => _bodyWhyKoreansCare(lang),
+      'NOT_A_BIG_ISSUE_BUT' => _bodyNotBigIssue(lang),
+      _ => _bodyIssueCard(lang),
+    };
+  }
+
+  List<Widget> _bodyIssueCard(String lang) {
+    return [
+      _buildSection(icon: Icons.article_rounded, title: lang == 'es' ? 'Qué pasó' : 'What happened', body: _a.whatHappened(lang)),
+      _sectionDivider(),
+      _buildSection(icon: Icons.flag_rounded, title: lang == 'es' ? 'Por qué importa en Corea' : 'Why it matters in Korea', body: _a.whyItMatters(lang)),
+      _sectionDivider(),
+      _buildKoreanReaction(lang),
+      _sectionDivider(),
+      _buildContextForFans(lang),
+      if (_a.originalSources.isNotEmpty) ...[_sectionDivider(), _buildOriginalSources(lang)],
+    ];
+  }
+
+  List<Widget> _bodyBuzzSnack(String lang) {
+    return [
+      _buildSection(icon: Icons.flash_on_rounded, title: lang == 'es' ? 'Qué se nota' : 'What\'s being noticed', body: _a.whatHappened(lang)),
+      if (_a.koreanReactionSummary(lang).isNotEmpty) ...[
+        _sectionDivider(),
+        _buildSection(icon: Icons.chat_rounded, title: lang == 'es' ? 'Punto de reacción' : 'Korean reaction point', body: _a.koreanReactionSummary(lang)),
+      ],
+    ];
+  }
+
+  List<Widget> _bodyReactionSplit(String lang) {
+    final sideA = (lang == 'es' ? _a.extraData['side_a_es'] : _a.extraData['side_a_en']) as String? ?? '';
+    final sideB = (lang == 'es' ? _a.extraData['side_b_es'] : _a.extraData['side_b_en']) as String? ?? '';
+    final meaning = (lang == 'es' ? _a.extraData['what_the_split_means_es'] : _a.extraData['what_the_split_means_en']) as String? ?? _a.whatHappened(lang);
+
+    return [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _sectionHeader(Icons.swap_horiz_rounded, lang == 'es' ? 'Opiniones divididas' : 'Divided opinions'),
+          const SizedBox(height: 16),
+          _splitBox(Icons.thumb_up_alt_rounded, KokColors.success, lang == 'es' ? 'Algunos dicen...' : 'Some say...', sideA),
+          const SizedBox(height: 10),
+          _splitBox(Icons.thumb_down_alt_rounded, KokColors.warning, lang == 'es' ? 'Otros dicen...' : 'Others say...', sideB),
+        ]),
+      ),
+      _sectionDivider(),
+      _buildSection(icon: Icons.psychology_rounded, title: lang == 'es' ? 'Qué significa la división' : 'What the split means', body: meaning),
+    ];
+  }
+
+  Widget _splitBox(IconData icon, Color color, String label, String body) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withAlpha(12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withAlpha(40)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 8),
+          Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: color)),
+        ]),
+        const SizedBox(height: 10),
+        Text(body, style: const TextStyle(fontSize: 14, color: KokColors.textPrimary, height: 1.7)),
+      ]),
+    );
+  }
+
+  List<Widget> _bodyCommentMood(String lang) {
+    final mood = _a.extraData['main_mood'] as String? ?? _a.sentiment;
+    final dist = _a.extraData['mood_distribution'] as Map<String, dynamic>?;
+
+    return [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _sectionHeader(Icons.mood_rounded, lang == 'es' ? 'Estado de ánimo' : 'Comment mood'),
+          const SizedBox(height: 16),
+          _moodBadge(mood),
+          if (dist != null) ...[const SizedBox(height: 16), _moodBars(dist)],
+        ]),
+      ),
+      _sectionDivider(),
+      _buildSection(icon: Icons.summarize_rounded, title: lang == 'es' ? 'Resumen' : 'Mood summary', body: _a.whatHappened(lang)),
+    ];
+  }
+
+  Widget _moodBadge(String mood) {
+    final (color, label) = switch (mood.toLowerCase()) {
+      'positive' || 'mostly positive' => (KokColors.success, mood),
+      'supportive' => (KokColors.success, mood),
+      'critical' || 'mildly critical' || 'strongly critical' => (KokColors.error, mood),
+      'amused' => (const Color(0xFFFFB74D), mood),
+      'curious' => (KokColors.accent, mood),
+      'divided' => (KokColors.warning, mood),
+      _ => (KokColors.warning, mood.isEmpty ? 'Mixed' : mood),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(color: color.withAlpha(20), borderRadius: BorderRadius.circular(10), border: Border.all(color: color.withAlpha(50))),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.circle, size: 10, color: color),
+        const SizedBox(width: 8),
+        Text(mood.isNotEmpty ? mood[0].toUpperCase() + mood.substring(1) : 'Mixed', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: color)),
+      ]),
+    );
+  }
+
+  Widget _moodBars(Map<String, dynamic> dist) {
+    final colorMap = <String, Color>{
+      'positive': KokColors.success, 'supportive': KokColors.success,
+      'amused': const Color(0xFFFFB74D), 'curious': KokColors.accent,
+      'critical': KokColors.error, 'negative': KokColors.error,
+      'mixed': KokColors.warning, 'neutral': KokColors.textMuted,
+    };
+    final entries = dist.entries.where((e) => (e.value as num? ?? 0) > 0).toList()
+      ..sort((a, b) => ((b.value as num?) ?? 0).compareTo((a.value as num?) ?? 0));
+
+    return Column(children: entries.map((e) {
+      final pct = (e.value as num?)?.toInt() ?? 0;
+      final color = colorMap[e.key] ?? KokColors.textMuted;
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Row(children: [
+          SizedBox(width: 70, child: Text(e.key, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600))),
+          Expanded(child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: SizedBox(height: 8, child: Stack(children: [
+              Container(color: KokColors.surfaceLight),
+              FractionallySizedBox(widthFactor: pct / 100, child: Container(color: color)),
+            ])),
+          )),
+          const SizedBox(width: 8),
+          SizedBox(width: 32, child: Text('$pct%', style: const TextStyle(fontSize: 11, color: KokColors.textMuted), textAlign: TextAlign.right)),
+        ]),
+      );
+    }).toList());
+  }
+
+  List<Widget> _bodyStageReaction(String lang) {
+    final videoTitle = _a.extraData['video_title'] as String? ?? '';
+    final focus = (lang == 'es' ? _a.extraData['performance_focus_es'] : _a.extraData['performance_focus_en']) as String? ?? '';
+
+    return [
+      if (videoTitle.isNotEmpty) Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: KokColors.success.withAlpha(10), borderRadius: BorderRadius.circular(12), border: Border.all(color: KokColors.success.withAlpha(30))),
+          child: Row(children: [
+            const Icon(Icons.play_circle_filled_rounded, size: 20, color: KokColors.success),
+            const SizedBox(width: 10),
+            Expanded(child: Text(videoTitle, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: KokColors.textPrimary))),
+          ]),
+        ),
+      ),
+      if (videoTitle.isNotEmpty) _sectionDivider(),
+      if (focus.isNotEmpty) ...[
+        _buildSection(icon: Icons.visibility_rounded, title: lang == 'es' ? 'Enfoque de reacción' : 'Performance focus', body: focus),
+        _sectionDivider(),
+      ],
+      _buildSection(icon: Icons.chat_rounded, title: lang == 'es' ? 'Reacciones coreanas' : 'Korean reactions', body: _a.whatHappened(lang)),
+    ];
+  }
+
+  List<Widget> _bodyKeywordPulse(String lang) {
+    final keywords = _a.extraData['keywords'] as List? ?? [];
+    final summary = (lang == 'es' ? _a.extraData['overall_summary_es'] : _a.extraData['overall_summary_en']) as String? ?? _a.whatHappened(lang);
+
+    return [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _sectionHeader(Icons.trending_up_rounded, lang == 'es' ? 'Palabras clave de hoy' : 'Today\'s keywords'),
+          const SizedBox(height: 16),
+          ...keywords.take(5).map<Widget>((kw) {
+            final keyword = kw is Map ? (kw['keyword'] ?? '') : kw.toString();
+            final reason = kw is Map ? (kw[lang == 'es' ? 'reason_es' : 'reason_en'] ?? '') : '';
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(color: KokColors.cardBg, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFF7C4DFF).withAlpha(30))),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(color: const Color(0xFF7C4DFF).withAlpha(20), borderRadius: BorderRadius.circular(8)),
+                  child: const Icon(Icons.tag_rounded, size: 16, color: Color(0xFF7C4DFF)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(keyword.toString(), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: KokColors.textPrimary)),
+                  if (reason.toString().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(reason.toString(), style: const TextStyle(fontSize: 12, color: KokColors.textSecondary, height: 1.4)),
+                  ],
+                ])),
+              ]),
+            );
+          }),
+        ]),
+      ),
+      _sectionDivider(),
+      _buildSection(icon: Icons.summarize_rounded, title: lang == 'es' ? 'Resumen' : 'Overview', body: summary),
+    ];
+  }
+
+  List<Widget> _bodyWhyKoreansCare(String lang) {
+    final whyMatters = (lang == 'es' ? _a.extraData['why_it_matters_es'] : _a.extraData['why_it_matters_en']) as String? ?? _a.whyItMatters(lang);
+    final fansMiss = (lang == 'es' ? _a.extraData['what_global_fans_might_miss_es'] : _a.extraData['what_global_fans_might_miss_en']) as String? ?? _a.contextForFans(lang);
+
+    return [
+      _buildSection(icon: Icons.school_rounded, title: lang == 'es' ? 'Explicación' : 'Explanation', body: _a.whatHappened(lang)),
+      _sectionDivider(),
+      if (whyMatters.isNotEmpty) ...[
+        _buildSection(icon: Icons.flag_rounded, title: lang == 'es' ? 'Por qué importa en Corea' : 'Why it matters in Korea', body: whyMatters),
+        _sectionDivider(),
+      ],
+      if (fansMiss.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF00897B).withAlpha(12),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFF00897B).withAlpha(40)),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                const Icon(Icons.lightbulb_outline_rounded, size: 18, color: Color(0xFF00897B)),
+                const SizedBox(width: 8),
+                Text(lang == 'es' ? 'Lo que los fans globales podrían perderse' : 'What global fans might miss',
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF00897B))),
+              ]),
+              const SizedBox(height: 12),
+              Text(fansMiss, style: const TextStyle(fontSize: 14, color: KokColors.textPrimary, height: 1.7)),
+            ]),
+          ),
+        ),
+    ];
+  }
+
+  List<Widget> _bodyNotBigIssue(String lang) {
+    final observation = _a.whatHappened(lang);
+    final whyNoticed = (lang == 'es' ? _a.extraData['why_it_is_being_noticed_es'] : _a.extraData['why_it_is_being_noticed_en']) as String? ?? '';
+    final caution = (lang == 'es' ? _a.extraData['caution_note_es'] : _a.extraData['caution_note_en']) as String? ?? '';
+
+    return [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Text(lang == 'es' ? 'No es gran cosa, pero...' : 'Not a big issue, but...',
+            style: TextStyle(fontSize: 14, fontStyle: FontStyle.italic, color: KokColors.textMuted.withAlpha(180))),
+      ),
+      const SizedBox(height: 8),
+      _buildSection(icon: Icons.remove_red_eye_rounded, title: lang == 'es' ? 'Qué se observa' : 'What\'s being noticed', body: observation),
+      if (whyNoticed.isNotEmpty) ...[
+        _sectionDivider(),
+        _buildSection(icon: Icons.help_outline_rounded, title: lang == 'es' ? 'Por qué se nota' : 'Why it\'s being noticed', body: whyNoticed),
+      ],
+      if (caution.isNotEmpty) ...[
+        _sectionDivider(),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: KokColors.warning.withAlpha(10), borderRadius: BorderRadius.circular(12), border: Border.all(color: KokColors.warning.withAlpha(30))),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.info_outline_rounded, size: 16, color: KokColors.warning),
+              const SizedBox(width: 10),
+              Expanded(child: Text(caution, style: const TextStyle(fontSize: 13, color: KokColors.textSecondary, height: 1.5))),
+            ]),
+          ),
+        ),
+      ],
+    ];
   }
 
   // ── Generic Section ──
