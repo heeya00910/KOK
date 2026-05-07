@@ -1227,6 +1227,10 @@ Return JSON only:
 
       const sourceLinks = (sources ?? []).map(s => ({ title: s.title, url: s.url, source: s.source_name }));
 
+      const now = new Date().toISOString();
+      const tags = card.tags ?? (c.related_artists ?? []);
+      const issueType = card.issue_type ?? "OTHER";
+
       await sb.from("kok_cards").insert({
         cluster_id: c.id,
         title_en: card.title_en ?? "",
@@ -1243,19 +1247,59 @@ Return JSON only:
         representative_reactions_es: card.representative_reactions_es ?? [],
         source_links: sourceLinks,
         reaction_sources: [...new Set((reactions ?? []).map(r => r.source_name))],
-        tags: card.tags ?? (c.related_artists ?? []),
-        issue_type: card.issue_type ?? "OTHER",
+        tags,
+        issue_type: issueType,
         reaction_tone: card.reaction_tone ?? "mixed",
         risk_level: card.risk_level ?? "low",
         status: "published",
-        published_at: new Date().toISOString(),
+        published_at: now,
         prompt_version: "v2.0",
         model_versions: { cerebras: "llama3.1-8b", groq: "llama-3.3-70b", gemini: "gemini-2.0-flash-lite" },
       });
 
+      const { data: articleRow } = await sb.from("articles").insert({
+        issue_title_en: card.title_en ?? "",
+        issue_title_es: card.title_es ?? "",
+        what_happened_en: card.what_happened_en ?? "",
+        what_happened_es: card.what_happened_es ?? "",
+        why_it_matters_en: card.what_people_are_talking_about_en ?? "",
+        why_it_matters_es: card.what_people_are_talking_about_es ?? "",
+        korean_reaction_summary_en: card.korean_reaction_summary_en ?? "",
+        korean_reaction_summary_es: card.korean_reaction_summary_es ?? "",
+        context_for_fans_en: card.context_for_global_fans_en ?? "",
+        context_for_fans_es: card.context_for_global_fans_es ?? "",
+        issue_tags: [issueType],
+        artist_tags: tags,
+        sentiment: card.reaction_tone ?? "mixed",
+        reaction_sample_size: (reactions ?? []).length,
+        content_type: "card",
+        published_at: now,
+      }).select("id").single();
+
+      if (articleRow) {
+        const reps_en = card.representative_reactions_en ?? [];
+        const reps_es = card.representative_reactions_es ?? [];
+        const reactionRows = reps_en.map((r: string, i: number) => ({
+          article_id: articleRow.id,
+          content_en: r,
+          content_es: reps_es[i] ?? r,
+          likes: 0,
+          source: "KR community",
+        }));
+        if (reactionRows.length > 0) await sb.from("top_reactions").insert(reactionRows);
+
+        const slRows = sourceLinks.map((s: Record<string, string>) => ({
+          article_id: articleRow.id,
+          title: s.title,
+          url: s.url,
+          type: "article",
+        }));
+        if (slRows.length > 0) await sb.from("source_links").insert(slRows);
+      }
+
       await sb.from("issue_clusters").update({
         status: "published",
-        updated_at: new Date().toISOString(),
+        updated_at: now,
       }).eq("id", c.id);
 
       await sb.rpc("increment_ai_usage", { p_provider: "gemini", p_tokens: 1500 });
@@ -1266,6 +1310,635 @@ Return JSON only:
     }
   }
   return generated;
+}
+
+// ═══════════════════════════════════════════════
+// STAGE 8b: SUPPLEMENTARY CONTENT GENERATION
+// ═══════════════════════════════════════════════
+
+const SAFETY_RULES = `SAFETY RULES (mandatory):
+- Paraphrase all reactions. Never copy raw comments.
+- Use safe framing: "Some Korean users are noticing...", "A visible reaction is forming..."
+- Never say "Koreans hate", "Koreans are furious", "Everyone is criticizing"
+- No defamation, no rumor amplification, no exaggeration
+- Do not state community speculation as fact`;
+
+type SupplementaryType =
+  | "STAGE_REACTION_SNACK"
+  | "REACTION_SPLIT"
+  | "KOREAN_COMMENT_MOOD"
+  | "KOREAN_BUZZ_SNACK"
+  | "NOT_A_BIG_ISSUE_BUT";
+
+interface ClusterRow {
+  id: string;
+  main_title_ko: string;
+  related_artists: string[] | null;
+  source_url_hash: string | null;
+  publish_score: number;
+  legal_risk_score: number;
+  noise_score: number;
+  reaction_strength: number;
+  status: string;
+  ai_review_json: Record<string, unknown> | null;
+  source_item_ids: string[] | null;
+  [key: string]: unknown;
+}
+
+interface ReactionRow {
+  id: string;
+  original_text_ko: string;
+  like_count: number | null;
+  source_name: string;
+  source_url: string | null;
+  cluster_id: string | null;
+  korean_ratio: number | null;
+  [key: string]: unknown;
+}
+
+// ── Cerebras helper ──
+
+async function callCerebras(prompt: string, maxTokens = 600): Promise<Record<string, unknown> | null> {
+  try {
+    const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${CEREBRAS_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "llama3.1-8b",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: maxTokens,
+        temperature: 0.6,
+      }),
+    });
+    if (!res.ok) {
+      console.error(`[cerebras] ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    let text = data.choices?.[0]?.message?.content ?? "";
+    text = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+    return JSON.parse(text);
+  } catch (e) {
+    console.error("[cerebras_parse]", e);
+    return null;
+  }
+}
+
+// ── Content type selector ──
+
+function selectSupplementaryType(
+  cluster: ClusterRow,
+  reactions: ReactionRow[],
+): SupplementaryType | null {
+  const sources = (cluster.source_item_ids ?? []) as string[];
+  const hasYoutube = (cluster as Record<string, unknown>).source_type === "youtube" ||
+    sources.some(s => s.includes("youtube"));
+  const isPerformance = /무대|직캠|fancam|stage|performance|댄스|dance/i.test(cluster.main_title_ko);
+  if (hasYoutube && isPerformance) return "STAGE_REACTION_SNACK";
+
+  const themes = new Set(reactions.map(r => r.source_name));
+  const sentiments = new Set(reactions.map(r => {
+    const text = r.original_text_ko ?? "";
+    if (/ㅋㅋ|웃|재밌|ㅎㅎ/.test(text)) return "amused";
+    if (/별로|싫|짜증|화나|실망/.test(text)) return "critical";
+    return "neutral";
+  }));
+  if (themes.size >= 2 && sentiments.size >= 2 && reactions.length >= 8) return "REACTION_SPLIT";
+
+  const qualityReactions = reactions.filter(r => (r.original_text_ko?.length ?? 0) >= 10);
+  if (qualityReactions.length >= 15) return "KOREAN_COMMENT_MOOD";
+  if (qualityReactions.length >= 8) return "KOREAN_COMMENT_MOOD";
+
+  if ((cluster.reaction_strength ?? 0) >= 45 &&
+      (cluster.legal_risk_score ?? 100) < 25 &&
+      (cluster.noise_score ?? 100) < 55) return "KOREAN_BUZZ_SNACK";
+
+  if ((cluster.reaction_strength ?? 0) >= 40 &&
+      (cluster.legal_risk_score ?? 100) < 20) return "NOT_A_BIG_ISSUE_BUT";
+
+  return null;
+}
+
+// ── Individual generators ──
+
+async function genBuzzSnack(
+  cluster: ClusterRow,
+  reactions: ReactionRow[],
+): Promise<Record<string, unknown> | null> {
+  if ((cluster.reaction_strength ?? 0) < 45) return null;
+  if ((cluster.legal_risk_score ?? 0) >= 25) return null;
+  if ((cluster.noise_score ?? 0) >= 55) return null;
+
+  const reactionsText = reactions.slice(0, 8)
+    .map(r => `- [${r.source_name}, ${r.like_count ?? 0} likes] "${r.original_text_ko}"`)
+    .join("\n");
+
+  const prompt = `You are a K-pop reaction curator for global fans.
+
+TOPIC: ${cluster.main_title_ko}
+ARTISTS: ${(cluster.related_artists ?? []).join(", ")}
+
+Korean online reactions:
+${reactionsText}
+
+${SAFETY_RULES}
+
+Create a short snack card about what Korean communities are noticing. Return JSON only:
+{
+  "title_en":"[catchy headline]",
+  "title_es":"[same in Spanish]",
+  "short_summary_en":"[2-3 sentences, what's being noticed]",
+  "short_summary_es":"[same in Spanish]",
+  "korean_reaction_point_en":"[the core reaction in one sentence]",
+  "korean_reaction_point_es":"[same]",
+  "source_hint":"[e.g. Nate Pann, TheQoo]",
+  "sentiment":"supportive|critical|divided|amused|mixed",
+  "artist_tags":["..."]
+}`;
+
+  return await callCerebras(prompt, 400);
+}
+
+async function genReactionSplit(
+  cluster: ClusterRow,
+  reactions: ReactionRow[],
+): Promise<Record<string, unknown> | null> {
+  if (reactions.length < 8) return null;
+
+  const reactionsText = reactions.slice(0, 12)
+    .map(r => `- [${r.source_name}, ${r.like_count ?? 0} likes] "${r.original_text_ko}"`)
+    .join("\n");
+
+  const prompt = `You are a K-pop reaction analyst for global fans.
+
+TOPIC: ${cluster.main_title_ko}
+ARTISTS: ${(cluster.related_artists ?? []).join(", ")}
+
+Korean reactions showing divided opinions:
+${reactionsText}
+
+${SAFETY_RULES}
+
+Identify two sides of the reaction and summarize safely. Return JSON only:
+{
+  "title_en":"[headline about the split]",
+  "title_es":"[same in Spanish]",
+  "side_a_en":"[what one side is saying, 2-3 sentences]",
+  "side_a_es":"[same]",
+  "side_b_en":"[what the other side is saying, 2-3 sentences]",
+  "side_b_es":"[same]",
+  "what_the_split_means_en":"[brief context, 1-2 sentences]",
+  "what_the_split_means_es":"[same]",
+  "sentiment":"divided",
+  "artist_tags":["..."]
+}`;
+
+  return await callCerebras(prompt, 600);
+}
+
+async function genCommentMood(
+  cluster: ClusterRow,
+  reactions: ReactionRow[],
+): Promise<Record<string, unknown> | null> {
+  const quality = reactions.filter(r => (r.original_text_ko?.length ?? 0) >= 10);
+  if (quality.length < 8) return null;
+
+  const reactionsText = quality.slice(0, 15)
+    .map(r => `- [${r.like_count ?? 0} likes] "${r.original_text_ko}"`)
+    .join("\n");
+
+  const prompt = `You are a K-pop comment mood analyst for global fans.
+
+TOPIC: ${cluster.main_title_ko}
+ARTISTS: ${(cluster.related_artists ?? []).join(", ")}
+
+Korean comments to analyze mood:
+${reactionsText}
+
+${SAFETY_RULES}
+
+Classify the overall mood and estimate percentages. Return JSON only:
+{
+  "title_en":"[mood-focused headline]",
+  "title_es":"[same in Spanish]",
+  "mood_distribution":{"positive":40,"amused":30,"critical":20,"curious":10},
+  "main_mood":"positive|mixed|critical|curious|amused|supportive",
+  "mood_summary_en":"[2-3 sentences describing the mood]",
+  "mood_summary_es":"[same in Spanish]",
+  "sentiment":"supportive|critical|divided|amused|mixed",
+  "artist_tags":["..."]
+}`;
+
+  return await callCerebras(prompt, 500);
+}
+
+async function genStageReaction(
+  cluster: ClusterRow,
+  reactions: ReactionRow[],
+): Promise<Record<string, unknown> | null> {
+  const reactionsText = reactions.slice(0, 10)
+    .map(r => `- [${r.like_count ?? 0} likes] "${r.original_text_ko}"`)
+    .join("\n");
+
+  const prompt = `You are a K-pop stage reaction curator for global fans.
+
+TOPIC: ${cluster.main_title_ko}
+ARTISTS: ${(cluster.related_artists ?? []).join(", ")}
+
+Korean reactions to a performance/stage:
+${reactionsText}
+
+${SAFETY_RULES}
+
+Summarize the stage reaction. Return JSON only:
+{
+  "title_en":"[headline about the stage reaction]",
+  "title_es":"[same in Spanish]",
+  "video_title":"[inferred video/performance title]",
+  "performance_focus_en":"[what aspect fans are reacting to, 1-2 sentences]",
+  "performance_focus_es":"[same]",
+  "korean_comment_summary_en":"[paraphrased reactions, 2-3 sentences]",
+  "korean_comment_summary_es":"[same]",
+  "sentiment":"supportive|critical|divided|amused|mixed",
+  "artist_tags":["..."]
+}`;
+
+  return await callCerebras(prompt, 400);
+}
+
+async function genSmallBuzz(
+  cluster: ClusterRow,
+  reactions: ReactionRow[],
+): Promise<Record<string, unknown> | null> {
+  if ((cluster.reaction_strength ?? 0) < 40) return null;
+  if ((cluster.legal_risk_score ?? 0) >= 20) return null;
+
+  const reactionsText = reactions.slice(0, 6)
+    .map(r => `- [${r.source_name}, ${r.like_count ?? 0} likes] "${r.original_text_ko}"`)
+    .join("\n");
+
+  const prompt = `You are a K-pop micro-trend spotter for global fans.
+
+TOPIC: ${cluster.main_title_ko}
+ARTISTS: ${(cluster.related_artists ?? []).join(", ")}
+
+Small but interesting Korean reactions:
+${reactionsText}
+
+${SAFETY_RULES}
+
+This isn't a big issue, but it's worth noting. Return JSON only:
+{
+  "title_en":"[headline framed as a small observation]",
+  "title_es":"[same in Spanish]",
+  "observation_en":"[what's being noticed, 1-2 sentences]",
+  "observation_es":"[same]",
+  "why_it_is_being_noticed_en":"[why fans are talking about it, 1 sentence]",
+  "why_it_is_being_noticed_es":"[same]",
+  "caution_note_en":"[brief note on context, 1 sentence]",
+  "caution_note_es":"[same]",
+  "sentiment":"supportive|critical|divided|amused|mixed",
+  "artist_tags":["..."]
+}`;
+
+  return await callCerebras(prompt, 400);
+}
+
+async function genWhyKoreansCare(): Promise<Record<string, unknown> | null> {
+  const { data: existing } = await sb.from("articles")
+    .select("id")
+    .eq("content_type", "WHY_KOREANS_CARE")
+    .gte("published_at", new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString())
+    .limit(1);
+  if (existing && existing.length > 0) return null;
+
+  const { data: clusters } = await sb.from("issue_clusters")
+    .select("main_title_ko, related_artists, main_keywords")
+    .in("status", ["published", "candidate", "keep"])
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (!clusters || clusters.length < 5) return null;
+
+  const topicHints = clusters.slice(0, 10)
+    .map((c: Record<string, unknown>) => `- ${c.main_title_ko} (artists: ${((c.related_artists as string[]) ?? []).join(", ")})`)
+    .join("\n");
+
+  const prompt = `You are a Korean K-pop culture explainer for global fans.
+
+Based on these recurring Korean K-pop discussion topics:
+${topicHints}
+
+Pick ONE recurring cultural pattern and explain WHY Korean fans care about it.
+
+${SAFETY_RULES}
+
+Return JSON only:
+{
+  "title_en":"[educational title about the cultural pattern]",
+  "title_es":"[same in Spanish]",
+  "explanation_en":"[3-4 sentences explaining the pattern]",
+  "explanation_es":"[same]",
+  "why_it_matters_en":"[1-2 sentences on why it matters in Korea]",
+  "why_it_matters_es":"[same]",
+  "what_global_fans_might_miss_en":"[1-2 sentences]",
+  "what_global_fans_might_miss_es":"[same]",
+  "artist_tags":["if applicable"],
+  "sentiment":"neutral"
+}`;
+
+  return await callCerebras(prompt, 600);
+}
+
+async function genKeywordPulse(): Promise<Record<string, unknown> | null> {
+  const { data: keywords } = await sb.from("keyword_candidates")
+    .select("*")
+    .gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+    .order("score", { ascending: false })
+    .limit(5);
+
+  if (!keywords || keywords.length < 3) return null;
+
+  const kwList = keywords.map((k: Record<string, unknown>) =>
+    `- "${k.keyword}" (score: ${k.score}, sources: ${k.source_count ?? 1})`
+  ).join("\n");
+
+  const prompt = `You are a K-pop trending keyword analyst.
+
+Today's top trending Korean K-pop keywords:
+${kwList}
+
+${SAFETY_RULES}
+
+Create a brief keyword pulse summary. Return JSON only:
+{
+  "title_en":"Today's K-pop Keyword Pulse",
+  "title_es":"Pulso de palabras clave K-pop de hoy",
+  "keywords":[{"keyword":"...","reason_en":"why it's trending","reason_es":"same"}],
+  "overall_summary_en":"[1-2 sentences overview]",
+  "overall_summary_es":"[same]",
+  "artist_tags":["..."]
+}`;
+
+  return await callCerebras(prompt, 500);
+}
+
+// ── Insert helper ──
+
+async function insertSupplementaryArticle(
+  contentType: string,
+  labelEn: string,
+  labelEs: string,
+  tier: "light" | "medium",
+  data: Record<string, unknown>,
+  reactions: ReactionRow[],
+  cluster: ClusterRow | null,
+): Promise<void> {
+  const now = new Date().toISOString();
+  const artists = (data.artist_tags as string[]) ?? cluster?.related_artists ?? [];
+  const sentiment = (data.sentiment as string) ?? "mixed";
+
+  const bodyEn = (data.short_summary_en ?? data.mood_summary_en ?? data.observation_en ??
+    data.korean_comment_summary_en ?? data.overall_summary_en ?? "") as string;
+  const bodyEs = (data.short_summary_es ?? data.mood_summary_es ?? data.observation_es ??
+    data.korean_comment_summary_es ?? data.overall_summary_es ?? "") as string;
+
+  const reactionSummaryEn = (data.korean_reaction_point_en ?? data.mood_summary_en ??
+    data.performance_focus_en ?? data.why_it_is_being_noticed_en ?? bodyEn) as string;
+  const reactionSummaryEs = (data.korean_reaction_point_es ?? data.mood_summary_es ??
+    data.performance_focus_es ?? data.why_it_is_being_noticed_es ?? bodyEs) as string;
+
+  const { title_en, title_es, sentiment: _s, artist_tags: _a, ...extraFields } = data;
+
+  const { data: articleRow } = await sb.from("articles").insert({
+    issue_title_en: (title_en ?? "") as string,
+    issue_title_es: (title_es ?? "") as string,
+    what_happened_en: bodyEn,
+    what_happened_es: bodyEs,
+    why_it_matters_en: "",
+    why_it_matters_es: "",
+    korean_reaction_summary_en: reactionSummaryEn,
+    korean_reaction_summary_es: reactionSummaryEs,
+    context_for_fans_en: "",
+    context_for_fans_es: "",
+    issue_tags: [contentType],
+    artist_tags: artists,
+    sentiment,
+    reaction_sample_size: reactions.length,
+    content_type: contentType,
+    content_tier: tier,
+    label_en: labelEn,
+    label_es: labelEs,
+    confidence_level: tier === "light" ? "low" : "medium",
+    extra_data: extraFields,
+    source_url_hash: cluster?.source_url_hash ?? null,
+    published_at: now,
+  }).select("id").single();
+
+  if (articleRow && reactions.length > 0) {
+    const topReactions = reactions
+      .sort((a, b) => (b.like_count ?? 0) - (a.like_count ?? 0))
+      .slice(0, 5);
+
+    const reactionRows = topReactions.map((r) => ({
+      article_id: articleRow.id,
+      content_en: r.original_text_ko,
+      content_es: r.original_text_ko,
+      likes: r.like_count ?? 0,
+      source: r.source_name,
+    }));
+    await sb.from("top_reactions").insert(reactionRows);
+  }
+}
+
+// ── Content type → generator mapping ──
+
+const GENERATORS: Record<SupplementaryType, {
+  fn: (cluster: ClusterRow, reactions: ReactionRow[]) => Promise<Record<string, unknown> | null>;
+  labelEn: string;
+  labelEs: string;
+  tier: "light" | "medium";
+  tokenCost: number;
+}> = {
+  KOREAN_BUZZ_SNACK: {
+    fn: genBuzzSnack, labelEn: "Buzz", labelEs: "Buzz", tier: "light", tokenCost: 400,
+  },
+  REACTION_SPLIT: {
+    fn: genReactionSplit, labelEn: "Reaction Split", labelEs: "Reacciones divididas", tier: "medium", tokenCost: 600,
+  },
+  KOREAN_COMMENT_MOOD: {
+    fn: genCommentMood, labelEn: "Comment Mood", labelEs: "Tono de comentarios", tier: "light", tokenCost: 500,
+  },
+  STAGE_REACTION_SNACK: {
+    fn: genStageReaction, labelEn: "Stage Reaction", labelEs: "Reacción al escenario", tier: "light", tokenCost: 400,
+  },
+  NOT_A_BIG_ISSUE_BUT: {
+    fn: genSmallBuzz, labelEn: "Small Buzz", labelEs: "Pequeño buzz", tier: "light", tokenCost: 400,
+  },
+};
+
+// ── Main orchestrator ──
+
+async function generateSupplementary(): Promise<number> {
+  const { data: budget } = await sb.rpc("check_ai_budget", { p_provider: "cerebras" });
+  if (!budget) return 0;
+
+  const { data: usedArticles } = await sb.from("articles")
+    .select("source_url_hash")
+    .not("source_url_hash", "is", null)
+    .gte("published_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+  const usedHashes = new Set((usedArticles ?? []).map(a => a.source_url_hash));
+
+  const { data: clusters } = await sb.from("issue_clusters")
+    .select("*")
+    .in("status", ["candidate", "keep", "pending_more_signals", "manual_review"])
+    .lt("legal_risk_score", 25)
+    .lt("noise_score", 55)
+    .order("reaction_strength", { ascending: false })
+    .limit(30);
+
+  if (!clusters || clusters.length === 0) {
+    const kwResult = await genKeywordPulseArticle();
+    return kwResult ? 1 : 0;
+  }
+
+  const qualifying = (clusters as ClusterRow[]).filter(c =>
+    (c.publish_score ?? 0) < 30 || !["published", "ready_for_generation"].includes(c.status)
+  );
+
+  let generated = 0;
+  const MAX_SUPPLEMENTARY = 8;
+
+  for (const cluster of qualifying) {
+    if (generated >= MAX_SUPPLEMENTARY) break;
+    if (cluster.source_url_hash && usedHashes.has(cluster.source_url_hash)) continue;
+
+    const { data: reactions } = await sb.from("raw_reaction_items")
+      .select("*")
+      .eq("cluster_id", cluster.id)
+      .order("like_count", { ascending: false })
+      .limit(20);
+
+    if (!reactions || reactions.length < 3) continue;
+
+    const contentType = selectSupplementaryType(cluster, reactions as ReactionRow[]);
+    if (!contentType) continue;
+
+    const gen = GENERATORS[contentType];
+
+    try {
+      const result = await gen.fn(cluster, reactions as ReactionRow[]);
+      if (!result) continue;
+
+      await insertSupplementaryArticle(
+        contentType,
+        gen.labelEn,
+        gen.labelEs,
+        gen.tier,
+        result,
+        reactions as ReactionRow[],
+        cluster,
+      );
+
+      if (cluster.source_url_hash) usedHashes.add(cluster.source_url_hash);
+      await sb.rpc("increment_ai_usage", { p_provider: "cerebras", p_tokens: gen.tokenCost });
+      generated++;
+      await new Promise(r => setTimeout(r, 1000));
+    } catch (e) {
+      console.error(`[supplementary_${contentType}]`, e);
+    }
+  }
+
+  if (generated < MAX_SUPPLEMENTARY) {
+    const kwResult = await genKeywordPulseArticle();
+    if (kwResult) generated++;
+  }
+
+  if (generated < MAX_SUPPLEMENTARY) {
+    const wkcResult = await genWhyKoreansCareArticle();
+    if (wkcResult) generated++;
+  }
+
+  return generated;
+}
+
+async function genWhyKoreansCareArticle(): Promise<boolean> {
+  const result = await genWhyKoreansCare();
+  if (!result) return false;
+
+  try {
+    const bodyEn = (result.explanation_en ?? "") as string;
+    const bodyEs = (result.explanation_es ?? "") as string;
+
+    const { title_en, title_es, sentiment: _s, artist_tags: _a, ...extraFields } = result;
+
+    await sb.from("articles").insert({
+      issue_title_en: (title_en ?? "") as string,
+      issue_title_es: (title_es ?? "") as string,
+      what_happened_en: bodyEn,
+      what_happened_es: bodyEs,
+      why_it_matters_en: (result.why_it_matters_en ?? "") as string,
+      why_it_matters_es: (result.why_it_matters_es ?? "") as string,
+      korean_reaction_summary_en: "",
+      korean_reaction_summary_es: "",
+      context_for_fans_en: "",
+      context_for_fans_es: "",
+      issue_tags: ["WHY_KOREANS_CARE"],
+      artist_tags: (result.artist_tags as string[]) ?? [],
+      sentiment: "neutral",
+      reaction_sample_size: 0,
+      content_type: "WHY_KOREANS_CARE",
+      content_tier: "evergreen",
+      label_en: "Context",
+      label_es: "Contexto",
+      confidence_level: "high",
+      extra_data: extraFields,
+      published_at: new Date().toISOString(),
+    });
+
+    await sb.rpc("increment_ai_usage", { p_provider: "cerebras", p_tokens: 600 });
+    return true;
+  } catch (e) {
+    console.error("[why_koreans_care]", e);
+    return false;
+  }
+}
+
+async function genKeywordPulseArticle(): Promise<boolean> {
+  const { data: existing } = await sb.from("articles")
+    .select("id")
+    .eq("content_type", "KEYWORD_PULSE")
+    .gte("published_at", new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString())
+    .limit(1);
+
+  if (existing && existing.length > 0) return false;
+
+  const result = await genKeywordPulse();
+  if (!result) return false;
+
+  try {
+    await insertSupplementaryArticle(
+      "KEYWORD_PULSE",
+      "Keyword Pulse",
+      "Pulso de palabras clave",
+      "light",
+      result,
+      [],
+      null,
+    );
+    await sb.rpc("increment_ai_usage", { p_provider: "cerebras", p_tokens: 500 });
+    return true;
+  } catch (e) {
+    console.error("[keyword_pulse]", e);
+    return false;
+  }
+}
+
+async function generateSnacks(): Promise<number> {
+  return await generateSupplementary();
 }
 
 // ═══════════════════════════════════
@@ -1326,6 +1999,12 @@ serve(async (req) => {
       case "ai_generate":
         result.generated = await generateCards();
         break;
+      case "generate_snacks":
+        result.snacks_generated = await generateSnacks();
+        break;
+      case "generate_supplementary":
+        result.supplementary_generated = await generateSupplementary();
+        break;
       case "cleanup":
         await sb.rpc("cleanup_expired_data");
         result.cleaned = true;
@@ -1361,6 +2040,9 @@ serve(async (req) => {
         const generated = await generateCards();
         result.cards_generated = generated;
 
+        const snacks = await generateSnacks();
+        result.snacks_generated = snacks;
+
         await sb.rpc("cleanup_expired_data");
 
         await logRun("full_pipeline", {
@@ -1368,6 +2050,7 @@ serve(async (req) => {
           clusters_created: clusters,
           clusters_rejected: filter.rejected,
           cards_generated: generated,
+          snacks_generated: snacks,
         });
         break;
       }

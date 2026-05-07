@@ -7,7 +7,7 @@ import '../models/comment.dart';
 import '../models/user_profile.dart';
 import '../core/constants/mock_data.dart';
 import '../services/supabase_service.dart';
-import '../services/content_scheduler.dart';
+
 
 class AppProvider extends ChangeNotifier {
   String _language = 'en';
@@ -91,10 +91,6 @@ class AppProvider extends ChangeNotifier {
 
     await _checkAdminRole();
     await loadArticles();
-
-    if (_isAdmin) {
-      ContentScheduler().start();
-    }
 
     notifyListeners();
   }

@@ -15,6 +15,14 @@ class NewsArticle {
   final String contextForFansEs;
   final List<SourceLink> originalSources;
 
+  // Content type & tier
+  final String contentType;
+  final String contentTier;
+  final String labelEn;
+  final String labelEs;
+  final String confidenceLevel;
+  final Map<String, dynamic> extraData;
+
   // Meta
   final String imageUrl;
   final List<String> issueTags;
@@ -43,6 +51,12 @@ class NewsArticle {
     required this.issueTags,
     required this.artistTags,
     required this.publishedAt,
+    this.contentType = 'KOK_ISSUE_CARD',
+    this.contentTier = 'heavy',
+    this.labelEn = 'Issue',
+    this.labelEs = 'Tema',
+    this.confidenceLevel = 'high',
+    this.extraData = const {},
     this.sentiment = 'neutral',
     this.reactionSampleSize = 0,
     this.viewCount = 0,
@@ -54,6 +68,9 @@ class NewsArticle {
   String whyItMatters(String lang) => lang == 'es' ? whyItMattersEs : whyItMattersEn;
   String koreanReactionSummary(String lang) => lang == 'es' ? koreanReactionSummaryEs : koreanReactionSummaryEn;
   String contextForFans(String lang) => lang == 'es' ? contextForFansEs : contextForFansEn;
+  String label(String lang) => lang == 'es' ? labelEs : labelEn;
+
+  bool get isSnack => contentType != 'KOK_ISSUE_CARD';
 
   List<String> get allTags => [...issueTags, ...artistTags];
 
@@ -82,6 +99,12 @@ class NewsArticle {
       issueTags: List<String>.from(json['issue_tags'] ?? []),
       artistTags: List<String>.from(json['artist_tags'] ?? []),
       publishedAt: DateTime.tryParse(json['published_at'] ?? '') ?? DateTime.now(),
+      contentType: json['content_type'] ?? 'KOK_ISSUE_CARD',
+      contentTier: json['content_tier'] ?? 'heavy',
+      labelEn: json['label_en'] ?? 'Issue',
+      labelEs: json['label_es'] ?? 'Tema',
+      confidenceLevel: json['confidence_level'] ?? 'high',
+      extraData: Map<String, dynamic>.from(json['extra_data'] ?? {}),
       sentiment: json['sentiment'] ?? 'neutral',
       reactionSampleSize: json['reaction_sample_size'] ?? 0,
       viewCount: json['view_count'] ?? 0,

@@ -5,10 +5,10 @@ import 'package:provider/provider.dart';
 import '../core/theme/app_theme.dart';
 import '../providers/app_provider.dart';
 import '../services/ad_service.dart';
-import '../services/content_scheduler.dart';
 import '../widgets/language_toggle.dart';
 import '../widgets/tag_filter_bar.dart';
 import '../widgets/news_card.dart';
+import '../widgets/snack_card.dart';
 import '../widgets/ad_unlock_sheet.dart';
 import 'article_detail_page.dart';
 
@@ -21,7 +21,6 @@ class FeedPage extends StatefulWidget {
 
 class _FeedPageState extends State<FeedPage> {
   final _scrollController = ScrollController();
-  bool _isGenerating = false;
   BannerAd? _bannerAd;
   bool _isBannerReady = false;
 
@@ -43,29 +42,6 @@ class _FeedPageState extends State<FeedPage> {
     _bannerAd?.dispose();
     _scrollController.dispose();
     super.dispose();
-  }
-
-  Future<void> _runPipeline(AppProvider provider) async {
-    if (_isGenerating) return;
-    setState(() => _isGenerating = true);
-
-    try {
-      await ContentScheduler().runPipeline();
-      await provider.loadArticles();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Content generated successfully'), backgroundColor: KokColors.success),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: KokColors.error),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isGenerating = false);
-    }
   }
 
   void _onArticleTap(String articleId) {
@@ -174,22 +150,6 @@ class _FeedPageState extends State<FeedPage> {
             children: [
               Image.asset('assets/images/kok_logo.png', height: 34, fit: BoxFit.contain),
               const Spacer(),
-              if (provider.isAdmin)
-                GestureDetector(
-                  onTap: _isGenerating ? null : () => _runPipeline(provider),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: _isGenerating ? KokColors.textMuted.withAlpha(20) : KokColors.primary.withAlpha(20),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: _isGenerating
-                        ? const SizedBox(width: 14, height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: KokColors.primary))
-                        : const Icon(Icons.auto_awesome_rounded, size: 16, color: KokColors.primary),
-                  ),
-                ),
-              if (provider.isAdmin) const SizedBox(width: 8),
               const LanguageToggle(),
               const SizedBox(width: 12),
               _buildFreeViewsBadge(provider, lang),
@@ -299,6 +259,13 @@ class _FeedPageState extends State<FeedPage> {
           final article = articles[index];
           final isLocked = !provider.isArticleUnlocked(article.id) &&
               !provider.canViewFree;
+
+          if (article.isSnack) {
+            return SnackCard(
+              article: article,
+              onTap: () => _onArticleTap(article.id),
+            );
+          }
 
           return Stack(
             children: [
