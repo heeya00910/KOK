@@ -72,6 +72,12 @@ class SupabaseService {
       sentiment: json['sentiment'] ?? 'neutral',
       reactionSampleSize: json['reaction_sample_size'] ?? 0,
       viewCount: json['view_count'] ?? 0,
+      contentType: json['content_type'] ?? 'KOK_ISSUE_CARD',
+      contentTier: json['content_tier'] ?? 'heavy',
+      labelEn: json['label_en'] ?? 'Issue',
+      labelEs: json['label_es'] ?? 'Tema',
+      confidenceLevel: json['confidence_level'] ?? 'high',
+      extraData: Map<String, dynamic>.from(json['extra_data'] ?? {}),
       topReactions: reactions
           .map((r) => TranslatedReaction(
                 id: r['id'] ?? '',
