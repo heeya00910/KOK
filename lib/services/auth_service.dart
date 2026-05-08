@@ -12,7 +12,14 @@ class AuthService {
 
   SupabaseClient get _supabase => Supabase.instance.client;
 
-  User? get currentUser => _supabase.auth.currentUser;
+  User? get currentUser {
+    try {
+      return _supabase.auth.currentUser;
+    } catch (_) {
+      return null;
+    }
+  }
+
   bool get isLoggedIn => currentUser != null;
 
   Stream<AuthState> get authStateChanges => _supabase.auth.onAuthStateChange;
