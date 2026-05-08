@@ -13,9 +13,7 @@ import 'pages/splash_page.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  try {
-    await dotenv.load(fileName: '.env');
-  } catch (_) {}
+  await dotenv.load(fileName: '.env');
 
   final supabaseUrl = dotenv.env['SUPABASE_URL'] ?? '';
   final supabaseKey = dotenv.env['SUPABASE_ANON_KEY'] ?? '';
@@ -24,12 +22,10 @@ Future<void> main() async {
     await Supabase.initialize(url: supabaseUrl, anonKey: supabaseKey);
   }
 
-  try {
-    if (Platform.isIOS) {
-      await AppTrackingTransparency.requestTrackingAuthorization();
-    }
-    await AdService().initialize();
-  } catch (_) {}
+  if (Platform.isIOS) {
+    await AppTrackingTransparency.requestTrackingAuthorization();
+  }
+  await AdService().initialize();
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
