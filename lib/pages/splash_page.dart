@@ -41,7 +41,10 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
 
   void _navigate() {
     if (!mounted) return;
-    final isLoggedIn = AuthService().isLoggedIn;
+    bool isLoggedIn = false;
+    try {
+      isLoggedIn = AuthService().isLoggedIn;
+    } catch (_) {}
     Navigator.pushReplacement(
       context,
       PageRouteBuilder(
