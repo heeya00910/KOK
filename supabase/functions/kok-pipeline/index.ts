@@ -1820,7 +1820,7 @@ async function insertSupplementaryArticle(
       .sort((a, b) => (b.like_count ?? 0) - (a.like_count ?? 0))
       .slice(0, 5);
 
-    const translated = await translateReactions(topReactions);
+    const translated = await translateReactions(topReactions, artists, topicHint);
 
     const reactionRows = topReactions.map((r, i) => ({
       article_id: articleRow.id,
@@ -1833,28 +1833,58 @@ async function insertSupplementaryArticle(
   }
 }
 
+const KNOWN_FEMALE_ARTISTS = new Set([
+  "jennie", "jisoo", "rosé", "rose", "lisa", "iu", "aespa", "karina", "winter", "giselle", "ningning",
+  "nayeon", "jeongyeon", "momo", "sana", "jihyo", "mina", "dahyun", "chaeyoung", "tzuyu",
+  "irene", "seulgi", "wendy", "joy", "yeri", "wonyoung", "yujin", "rei", "gaeul", "leeseo", "liz",
+  "minji", "hanni", "danielle", "haerin", "hyein", "sullyoon", "jinni", "bae", "kyujin",
+  "miyeon", "minnie", "soyeon", "yuqi", "shuhua", "kazuha", "sakura", "chaewon", "yunjin", "eunchae",
+  "yeji", "lia", "ryujin", "chaeryeong", "yuna", "solar", "moonbyul", "wheein", "hwasa",
+  "taeyeon", "tiffany", "yoona", "jessica", "hyoyeon", "sooyoung", "sunny", "seohyun",
+  "sunmi", "chungha", "hwasa", "bibi", "heize",
+]);
+
 async function translateReactions(
   reactions: ReactionRow[],
+  artists: string[] = [],
+  topicHint = "",
 ): Promise<Array<{ en: string; es: string }>> {
   if (reactions.length === 0) return [];
 
   const koTexts = reactions.map((r, i) => `${i + 1}. "${r.original_text_ko}"`).join("\n");
 
-  const prompt = `Translate and lightly paraphrase these Korean online comments into English and Spanish.
+  const isFemale = artists.some(a => KNOWN_FEMALE_ARTISTS.has(a.toLowerCase()));
+  const isMale = artists.length > 0 && !isFemale;
+  const genderHint = isFemale
+    ? `The subject is FEMALE. Use she/her/hers pronouns.`
+    : isMale
+    ? `The subject is MALE. Use he/him/his pronouns.`
+    : `Determine gender from context.`;
 
-RULES:
-- Paraphrase naturally, do NOT translate word-for-word
-- Keep the original energy, humor, and spiciness of Korean netizen culture
-- Soften extreme profanity but preserve the attitude and tone
-- Use natural fan community language
-- Filter out slurs, hate speech, or direct personal attacks — rephrase them as pointed observations
-- Keep each translation short (1-2 sentences max)
+  const artistContext = artists.length > 0
+    ? `Artists being discussed: ${artists.join(", ")}. ${topicHint ? `Topic: ${topicHint}.` : ""}`
+    : "";
+
+  const prompt = `Translate these Korean online comments into English and Spanish.
+
+CONTEXT: ${artistContext}
+GENDER: ${genderHint}
+
+CRITICAL RULES:
+- Translate the ACTUAL MEANING faithfully. Do NOT strip away the point of the comment.
+- If the original says something specific (praise, criticism, observation), the translation MUST convey that same specific point.
+- Keep the original energy, humor, sarcasm, and spiciness intact.
+- Only soften extreme slurs or hate speech. Regular profanity like "미쳤다", "개예쁘다", "ㄹㅇ 인정" should be translated with equivalent casual energy, not sterilized.
+- Pronouns MUST match the artist's gender. ${genderHint}
+- Do NOT add framing like "A user said..." — just translate the comment directly.
+- Keep each translation 1-2 sentences, but include the full meaning.
+- If the comment references a specific event or detail, KEEP that reference.
 
 Korean comments:
 ${koTexts}
 
-Return ONLY a JSON array, same order, no wrapping object:
-[{"en":"English version","es":"Spanish version"},...]`;
+Return ONLY a JSON array, same order, no wrapping:
+[{"en":"...","es":"..."},...]`;
 
   try {
     const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
@@ -1928,16 +1958,22 @@ async function generateSupplementary(): Promise<number> {
 
   const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
   const { data: usedArticles } = await sb.from("articles")
-    .select("source_url_hash, content_type, issue_title_en")
+    .select("source_url_hash, content_type, issue_title_en, artist_tags")
     .gte("published_at", sixHoursAgo);
 
   const usedHashes = new Set<string>();
   const usedTitles = new Set<string>();
   const recentTypeCounts: Record<string, number> = {};
+  const recentArtistCounts = new Map<string, number>();
   for (const a of usedArticles ?? []) {
     if (a.source_url_hash) usedHashes.add(a.source_url_hash);
     if (a.issue_title_en) usedTitles.add(a.issue_title_en.toLowerCase().slice(0, 30));
     recentTypeCounts[a.content_type] = (recentTypeCounts[a.content_type] ?? 0) + 1;
+    const tags = (a.artist_tags ?? []) as string[];
+    if (tags.length > 0) {
+      const primary = tags[0].toLowerCase();
+      recentArtistCounts.set(primary, (recentArtistCounts.get(primary) ?? 0) + 1);
+    }
   }
 
   const TYPE_LIMITS: Record<string, number> = {
@@ -1968,6 +2004,8 @@ async function generateSupplementary(): Promise<number> {
   let generated = 0;
   const MAX_SUPPLEMENTARY = 6;
   const usedTypes = new Set<string>();
+  const usedArtists = new Map<string, number>(recentArtistCounts);
+  const MAX_PER_ARTIST = 2;
 
   for (const cluster of qualifying) {
     if (generated >= MAX_SUPPLEMENTARY) break;
@@ -1977,6 +2015,9 @@ async function generateSupplementary(): Promise<number> {
 
     const titlePrefix = (cluster.main_title_ko ?? "").slice(0, 20);
     if (usedTitles.has(titlePrefix.toLowerCase())) continue;
+
+    const primaryArtist = (cluster.related_artists ?? [])[0]?.toLowerCase() ?? "";
+    if (primaryArtist && (usedArtists.get(primaryArtist) ?? 0) >= MAX_PER_ARTIST) continue;
 
     const { data: reactions } = await sb.from("raw_reaction_items")
       .select("*")
@@ -2010,6 +2051,7 @@ async function generateSupplementary(): Promise<number> {
 
       usedTypes.add(contentType);
       recentTypeCounts[contentType] = (recentTypeCounts[contentType] ?? 0) + 1;
+      if (primaryArtist) usedArtists.set(primaryArtist, (usedArtists.get(primaryArtist) ?? 0) + 1);
       if (cluster.source_url_hash) usedHashes.add(cluster.source_url_hash);
       usedHashes.add(clusterKey);
       await sb.rpc("increment_ai_usage", { p_provider: "cerebras", p_tokens: gen.tokenCost });
