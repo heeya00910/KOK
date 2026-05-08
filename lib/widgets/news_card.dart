@@ -69,9 +69,10 @@ class NewsCard extends StatelessWidget {
           child: hasImage
               ? CachedNetworkImage(
                   imageUrl: article.imageUrl,
-                  height: 180,
+                  height: 200,
                   width: double.infinity,
                   fit: BoxFit.cover,
+                  alignment: Alignment.topCenter,
                   placeholder: (_, __) => Shimmer.fromColors(
                     baseColor: KokColors.surfaceLight,
                     highlightColor: KokColors.surface,

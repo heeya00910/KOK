@@ -69,11 +69,12 @@ class SnackCard extends StatelessWidget {
           borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
           child: CachedNetworkImage(
             imageUrl: article.imageUrl,
-            height: 120,
+            height: 150,
             width: double.infinity,
             fit: BoxFit.cover,
+            alignment: Alignment.topCenter,
             placeholder: (_, __) => Container(
-              height: 120,
+              height: 150,
               color: KokColors.surfaceLight,
             ),
             errorWidget: (_, __, ___) => const SizedBox.shrink(),

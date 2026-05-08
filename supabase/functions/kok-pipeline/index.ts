@@ -1405,7 +1405,10 @@ function selectSupplementaryType(
   const hasYoutube = sourceTypes.some(s => s.startsWith("youtube")) ||
     ((cluster.youtube_video_count as number) ?? 0) > 0;
   const isPerformance = /무대|직캠|fancam|stage|performance|댄스|dance|컴백|comeback/i.test(cluster.main_title_ko);
-  if (hasYoutube && isPerformance) return "STAGE_REACTION_SNACK";
+  const noiseOk = (cluster.noise_score ?? 0) < 55;
+  const legalOk = (cluster.legal_risk_score ?? 0) < 25;
+  const sourceCount = cluster.source_count ?? 0;
+  const qualityReactions = reactions.filter(r => (r.original_text_ko?.length ?? 0) >= 10);
 
   const sentimentBuckets = { amused: 0, critical: 0, supportive: 0 };
   for (const r of reactions) {
@@ -1415,23 +1418,21 @@ function selectSupplementaryType(
     else if (/좋|최고|대박|멋|잘/.test(text)) sentimentBuckets.supportive++;
   }
   const hasDivision = sentimentBuckets.critical >= 2 && sentimentBuckets.supportive >= 2;
-  if (hasDivision && reactions.length >= 8 && !usedTypes.has("REACTION_SPLIT")) return "REACTION_SPLIT";
 
-  const qualityReactions = reactions.filter(r => (r.original_text_ko?.length ?? 0) >= 10);
+  const candidates: SupplementaryType[] = [];
 
-  if (qualityReactions.length >= 12 && !usedTypes.has("KOREAN_COMMENT_MOOD")) return "KOREAN_COMMENT_MOOD";
+  if (hasYoutube && isPerformance) candidates.push("STAGE_REACTION_SNACK");
+  if (hasDivision && reactions.length >= 8) candidates.push("REACTION_SPLIT");
+  if (qualityReactions.length >= 15) candidates.push("KOREAN_COMMENT_MOOD");
+  if (sourceCount >= 2 && noiseOk && legalOk) candidates.push("KOREAN_BUZZ_SNACK");
+  if (qualityReactions.length >= 5 && noiseOk && legalOk) candidates.push("WHY_KOREANS_CARE");
+  if (noiseOk && legalOk && sourceCount >= 1) candidates.push("NOT_A_BIG_ISSUE_BUT");
 
-  const sourceCount = cluster.source_count ?? 0;
-  const noiseOk = (cluster.noise_score ?? 0) < 55;
-  const legalOk = (cluster.legal_risk_score ?? 0) < 25;
+  const available = candidates.filter(t => !usedTypes.has(t));
+  if (available.length > 0) return available[0];
 
-  if (sourceCount >= 2 && noiseOk && legalOk && !usedTypes.has("KOREAN_BUZZ_SNACK")) return "KOREAN_BUZZ_SNACK";
-
-  if (qualityReactions.length >= 3 && noiseOk && legalOk) return "KOREAN_BUZZ_SNACK";
-
-  if (noiseOk && (cluster.legal_risk_score ?? 0) < 20) return "NOT_A_BIG_ISSUE_BUT";
-
-  return null;
+  const fallback = candidates[0];
+  return fallback ?? (noiseOk && legalOk ? "KOREAN_BUZZ_SNACK" : null);
 }
 
 // ── Individual generators ──
@@ -1977,11 +1978,13 @@ async function generateSupplementary(): Promise<number> {
   }
 
   const TYPE_LIMITS: Record<string, number> = {
-    KOREAN_BUZZ_SNACK: 4,
-    REACTION_SPLIT: 2,
-    KOREAN_COMMENT_MOOD: 2,
-    STAGE_REACTION_SNACK: 2,
-    NOT_A_BIG_ISSUE_BUT: 2,
+    KOREAN_BUZZ_SNACK: 6,
+    REACTION_SPLIT: 4,
+    KOREAN_COMMENT_MOOD: 3,
+    STAGE_REACTION_SNACK: 3,
+    NOT_A_BIG_ISSUE_BUT: 4,
+    WHY_KOREANS_CARE: 3,
+    KEYWORD_PULSE: 2,
   };
 
   const { data: clusters } = await sb.from("issue_clusters")
@@ -1998,14 +2001,14 @@ async function generateSupplementary(): Promise<number> {
   }
 
   const qualifying = (clusters as ClusterRow[]).filter(c =>
-    !["published", "ready_for_generation"].includes(c.status)
+    !["published"].includes(c.status)
   );
 
   let generated = 0;
-  const MAX_SUPPLEMENTARY = 6;
+  const MAX_SUPPLEMENTARY = 12;
   const usedTypes = new Set<string>();
   const usedArtists = new Map<string, number>(recentArtistCounts);
-  const MAX_PER_ARTIST = 2;
+  const MAX_PER_ARTIST = 1;
 
   for (const cluster of qualifying) {
     if (generated >= MAX_SUPPLEMENTARY) break;
@@ -2121,7 +2124,7 @@ async function genKeywordPulseArticle(): Promise<boolean> {
   const { data: existing } = await sb.from("articles")
     .select("id")
     .eq("content_type", "KEYWORD_PULSE")
-    .gte("published_at", new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString())
+    .gte("published_at", new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString())
     .limit(1);
 
   if (existing && existing.length > 0) return false;
