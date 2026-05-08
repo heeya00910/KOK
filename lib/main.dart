@@ -13,19 +13,21 @@ import 'pages/splash_page.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await dotenv.load(fileName: '.env');
+  try {
+    await dotenv.load(fileName: '.env');
+  } catch (_) {}
 
-  final supabaseUrl = dotenv.env['SUPABASE_URL'] ?? '';
-  final supabaseKey = dotenv.env['SUPABASE_ANON_KEY'] ?? '';
+  await Supabase.initialize(
+    url: 'https://lwetcjkgspurlhyfufbz.supabase.co',
+    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx3ZXRjamtnc3B1cmxoeWZ1ZmJ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4NzkwNzAsImV4cCI6MjA5MzQ1NTA3MH0.yWF-c4IJBPwMh80K35vYF1hLb7tYWd1vLyMQcxKwdlw',
+  );
 
-  if (supabaseUrl.isNotEmpty && supabaseKey.isNotEmpty) {
-    await Supabase.initialize(url: supabaseUrl, anonKey: supabaseKey);
-  }
-
-  if (Platform.isIOS) {
-    await AppTrackingTransparency.requestTrackingAuthorization();
-  }
-  await AdService().initialize();
+  try {
+    if (Platform.isIOS) {
+      await AppTrackingTransparency.requestTrackingAuthorization();
+    }
+    await AdService().initialize();
+  } catch (_) {}
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(

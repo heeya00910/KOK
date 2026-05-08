@@ -39,6 +39,20 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>Role</key>
+			<string>None</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.107880322066-fmeplha8r6dqv7fpke2g2epephjl7sbv</string>
+				<string>com.kok.realview</string>
+			</array>
+		</dict>
+	</array>
+	<key>GIDClientID</key>
+	<string>107880322066-fmeplha8r6dqv7fpke2g2epephjl7sbv.apps.googleusercontent.com</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

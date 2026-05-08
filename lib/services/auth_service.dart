@@ -12,7 +12,14 @@ class AuthService {
 
   SupabaseClient get _supabase => Supabase.instance.client;
 
-  User? get currentUser => _supabase.auth.currentUser;
+  User? get currentUser {
+    try {
+      return _supabase.auth.currentUser;
+    } catch (_) {
+      return null;
+    }
+  }
+
   bool get isLoggedIn => currentUser != null;
 
   Stream<AuthState> get authStateChanges => _supabase.auth.onAuthStateChange;
@@ -20,38 +27,33 @@ class AuthService {
   static const _webClientId =
       '107880322066-vmla6as8t2ih2mbn9c2hu5cmtdubiv6r.apps.googleusercontent.com';
 
-  final GoogleSignIn _googleSignIn = GoogleSignIn(
+  static const _iosClientId =
+      '107880322066-fmeplha8r6dqv7fpke2g2epephjl7sbv.apps.googleusercontent.com';
+
+  late final GoogleSignIn _googleSignIn = GoogleSignIn(
+    clientId: _iosClientId,
     serverClientId: _webClientId,
   );
 
   Future<AuthResponse> signInWithGoogle() async {
-    final googleUser = await _googleSignIn.signIn();
-    if (googleUser == null) throw AuthException('Login cancelled');
-
-    final googleAuth = await googleUser.authentication;
-    final idToken = googleAuth.idToken;
-    final accessToken = googleAuth.accessToken;
-
-    if (idToken == null) throw AuthException('No ID token');
-
     try {
+      final googleUser = await _googleSignIn.signIn();
+      if (googleUser == null) throw AuthException('Login cancelled');
+
+      final googleAuth = await googleUser.authentication;
+      final idToken = googleAuth.idToken;
+      final accessToken = googleAuth.accessToken;
+
+      if (idToken == null) throw AuthException('No ID token');
+
       return await _supabase.auth.signInWithIdToken(
         provider: OAuthProvider.google,
         idToken: idToken,
         accessToken: accessToken,
       );
     } catch (e) {
-      final parts = idToken.split('.');
-      if (parts.length == 3) {
-        final payload = utf8.decode(
-            base64Url.decode(base64Url.normalize(parts[1])));
-        final data = jsonDecode(payload) as Map<String, dynamic>;
-        final aud = data['aud'];
-        throw AuthException(
-          'Supabase > Google Provider > Client ID 에 이 값을 넣으세요:\n$aud',
-        );
-      }
-      rethrow;
+      if (e is AuthException) rethrow;
+      throw AuthException('Google login failed. Please try Apple login.');
     }
   }
 
