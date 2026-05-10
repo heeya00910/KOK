@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -30,14 +31,20 @@ class AuthService {
   static const _iosClientId =
       '107880322066-fmeplha8r6dqv7fpke2g2epephjl7sbv.apps.googleusercontent.com';
 
-  late final GoogleSignIn _googleSignIn = GoogleSignIn(
-    clientId: _iosClientId,
-    serverClientId: _webClientId,
-  );
+  GoogleSignIn? _googleSignIn;
+
+  GoogleSignIn _getGoogleSignIn() {
+    _googleSignIn ??= GoogleSignIn(
+      clientId: Platform.isIOS ? _iosClientId : null,
+      serverClientId: _webClientId,
+      scopes: ['email'],
+    );
+    return _googleSignIn!;
+  }
 
   Future<AuthResponse> signInWithGoogle() async {
     try {
-      final googleUser = await _googleSignIn.signIn();
+      final googleUser = await _getGoogleSignIn().signIn();
       if (googleUser == null) throw AuthException('Login cancelled');
 
       final googleAuth = await googleUser.authentication;
@@ -81,7 +88,7 @@ class AuthService {
 
   Future<void> signOut() async {
     try {
-      await _googleSignIn.signOut();
+      await _getGoogleSignIn().signOut();
     } catch (_) {}
     await _supabase.auth.signOut();
   }
