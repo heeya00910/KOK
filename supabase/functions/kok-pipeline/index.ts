@@ -1740,7 +1740,6 @@ async function fetchContentImage(artists: string[], topicHint?: string): Promise
         .map((it: Record<string, string>) => it.link ?? "")
         .filter((link: string) =>
           /\.(jpg|jpeg|png|webp)/i.test(link) &&
-          !/blog|cafe|tistory|dcinside/i.test(link) &&
           !_usedImageUrls.has(link)
         );
 
@@ -1953,22 +1952,51 @@ const GENERATORS: Record<SupplementaryType, {
 
 // ── Main orchestrator ──
 
+function extractTopicKey(title: string): string {
+  const stop = new Set(["the","a","an","is","are","was","in","on","at","to","for","of","and","or","s","t","about","with","from","their","its","has","have","had","but","not","this","that","over","by","as","after"]);
+  return title.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !stop.has(w))
+    .sort()
+    .join(" ");
+}
+
+function isSimilarTopic(newTitle: string, existingTopics: Map<string, number>, maxPerTopic: number): boolean {
+  const newKey = extractTopicKey(newTitle);
+  const newWords = new Set(newKey.split(" "));
+  if (newWords.size === 0) return false;
+
+  for (const [existingKey, count] of existingTopics) {
+    if (count >= maxPerTopic) {
+      const existingWords = new Set(existingKey.split(" "));
+      const overlap = [...newWords].filter(w => existingWords.has(w)).length;
+      const similarity = overlap / Math.min(newWords.size, existingWords.size);
+      if (similarity >= 0.6) return true;
+    }
+  }
+  return false;
+}
+
 async function generateSupplementary(): Promise<number> {
   const { data: budget } = await sb.rpc("check_ai_budget", { p_provider: "cerebras" });
   if (!budget) return 0;
 
-  const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { data: usedArticles } = await sb.from("articles")
     .select("source_url_hash, content_type, issue_title_en, artist_tags")
-    .gte("published_at", sixHoursAgo);
+    .gte("published_at", oneDayAgo);
 
   const usedHashes = new Set<string>();
-  const usedTitles = new Set<string>();
+  const usedTitleWords = new Map<string, number>();
   const recentTypeCounts: Record<string, number> = {};
   const recentArtistCounts = new Map<string, number>();
   for (const a of usedArticles ?? []) {
     if (a.source_url_hash) usedHashes.add(a.source_url_hash);
-    if (a.issue_title_en) usedTitles.add(a.issue_title_en.toLowerCase().slice(0, 30));
+    if (a.issue_title_en) {
+      const words = extractTopicKey(a.issue_title_en);
+      usedTitleWords.set(words, (usedTitleWords.get(words) ?? 0) + 1);
+    }
     recentTypeCounts[a.content_type] = (recentTypeCounts[a.content_type] ?? 0) + 1;
     const tags = (a.artist_tags ?? []) as string[];
     if (tags.length > 0) {
@@ -2016,8 +2044,8 @@ async function generateSupplementary(): Promise<number> {
     const clusterKey = cluster.cluster_key ?? cluster.id;
     if (usedHashes.has(clusterKey)) continue;
 
-    const titlePrefix = (cluster.main_title_ko ?? "").slice(0, 20);
-    if (usedTitles.has(titlePrefix.toLowerCase())) continue;
+    const clusterTitle = cluster.main_title_ko ?? "";
+    if (isSimilarTopic(clusterTitle, usedTitleWords, 2)) continue;
 
     const primaryArtist = (cluster.related_artists ?? [])[0]?.toLowerCase() ?? "";
     if (primaryArtist && (usedArtists.get(primaryArtist) ?? 0) >= MAX_PER_ARTIST) continue;
@@ -2055,6 +2083,8 @@ async function generateSupplementary(): Promise<number> {
       usedTypes.add(contentType);
       recentTypeCounts[contentType] = (recentTypeCounts[contentType] ?? 0) + 1;
       if (primaryArtist) usedArtists.set(primaryArtist, (usedArtists.get(primaryArtist) ?? 0) + 1);
+      const topicKey = extractTopicKey(clusterTitle);
+      usedTitleWords.set(topicKey, (usedTitleWords.get(topicKey) ?? 0) + 1);
       if (cluster.source_url_hash) usedHashes.add(cluster.source_url_hash);
       usedHashes.add(clusterKey);
       await sb.rpc("increment_ai_usage", { p_provider: "cerebras", p_tokens: gen.tokenCost });
