@@ -1301,7 +1301,7 @@ Return JSON only:
         model_versions: { cerebras: "llama3.1-8b", groq: "llama-3.3-70b", gemini: "gemini-2.0-flash-lite" },
       });
 
-      const cardImageUrl = await fetchArtistImage(tags, c.main_title_ko);
+      const cardImage = await fetchArtistImage(tags, c.main_title_ko);
 
       const { data: articleRow } = await sb.from("articles").insert({
         issue_title_en: card.title_en ?? "",
@@ -1314,7 +1314,7 @@ Return JSON only:
         korean_reaction_summary_es: card.korean_reaction_summary_es ?? "",
         context_for_fans_en: card.context_for_global_fans_en ?? "",
         context_for_fans_es: card.context_for_global_fans_es ?? "",
-        image_url: cardImageUrl,
+        image_url: cardImage.url,
         issue_tags: [issueType],
         artist_tags: tags,
         sentiment: (card.reaction_tone === "divided" ? "mixed" : card.reaction_tone) ?? "mixed",
@@ -1324,6 +1324,7 @@ Return JSON only:
         label_en: "Issue",
         label_es: "Tema",
         confidence_level: "high",
+        extra_data: cardImage.source ? { image_source: cardImage.source } : {},
         published_at: now,
       }).select("id").single();
 
@@ -1804,8 +1805,13 @@ Create a brief keyword pulse summary. Return JSON only:
 
 const _usedImageUrls = new Set<string>();
 
-async function fetchContentImage(artists: string[], topicHint?: string): Promise<string> {
-  if (!NAVER_CLIENT_ID) return "";
+interface ImageResult {
+  url: string;
+  source: string;
+}
+
+async function fetchContentImage(artists: string[], topicHint?: string): Promise<ImageResult> {
+  if (!NAVER_CLIENT_ID) return { url: "", source: "" };
 
   const mainArtist = artists[0] ?? "";
   const topic = (topicHint ?? "").replace(/[^\uAC00-\uD7AFa-zA-Z0-9\s]/g, "").trim();
@@ -1838,25 +1844,26 @@ async function fetchContentImage(artists: string[], topicHint?: string): Promise
       const items = data.items ?? [];
 
       const candidates = items
-        .map((it: Record<string, string>) => it.link ?? "")
-        .filter((link: string) =>
-          /\.(jpg|jpeg|png|webp)/i.test(link) &&
-          !_usedImageUrls.has(link)
+        .filter((it: Record<string, string>) =>
+          /\.(jpg|jpeg|png|webp)/i.test(it.link ?? "") &&
+          !_usedImageUrls.has(it.link ?? "")
         );
 
       if (candidates.length > 0) {
         const pick = candidates[Math.floor(Math.random() * Math.min(candidates.length, 5))];
-        _usedImageUrls.add(pick);
-        return pick;
+        const imageUrl = pick.link ?? "";
+        _usedImageUrls.add(imageUrl);
+        const imageSource = `Naver Image Search — ${pick.sizeheight ?? ""}x${pick.sizewidth ?? ""} via ${new URL(imageUrl).hostname}`;
+        return { url: imageUrl, source: imageSource };
       }
     } catch (e) {
       console.error("[content_image]", e);
     }
   }
-  return "";
+  return { url: "", source: "" };
 }
 
-async function fetchArtistImage(artists: string[], topicHint?: string): Promise<string> {
+async function fetchArtistImage(artists: string[], topicHint?: string): Promise<ImageResult> {
   return fetchContentImage(artists, topicHint);
 }
 
@@ -1887,9 +1894,14 @@ async function insertSupplementaryArticle(
     data.performance_focus_es ?? data.why_it_is_being_noticed_es ?? bodyEs) as string;
 
   const topicHint = (data.title_en as string) ?? cluster?.main_title_ko ?? "";
-  const imageUrl = await fetchArtistImage(artists, topicHint);
+  const imageResult = await fetchArtistImage(artists, topicHint);
 
   const { title_en, title_es, sentiment: _s, artist_tags: _a, ...extraFields } = data;
+
+  const extraDataWithImage = {
+    ...extraFields,
+    ...(imageResult.source ? { image_source: imageResult.source } : {}),
+  };
 
   const { data: articleRow } = await sb.from("articles").insert({
     issue_title_en: (title_en ?? "") as string,
@@ -1902,7 +1914,7 @@ async function insertSupplementaryArticle(
     korean_reaction_summary_es: reactionSummaryEs,
     context_for_fans_en: "",
     context_for_fans_es: "",
-    image_url: imageUrl,
+    image_url: imageResult.url,
     issue_tags: [contentType],
     artist_tags: artists,
     sentiment,
@@ -1912,26 +1924,46 @@ async function insertSupplementaryArticle(
     label_en: labelEn,
     label_es: labelEs,
     confidence_level: tier === "light" ? "low" : "medium",
-    extra_data: extraFields,
+    extra_data: extraDataWithImage,
     source_url_hash: cluster?.source_url_hash ?? null,
     published_at: now,
   }).select("id").single();
 
-  if (articleRow && reactions.length > 0) {
-    const topReactions = reactions
-      .sort((a, b) => (b.like_count ?? 0) - (a.like_count ?? 0))
-      .slice(0, 5);
+  if (articleRow) {
+    if (reactions.length > 0) {
+      const topReactions = reactions
+        .sort((a, b) => (b.like_count ?? 0) - (a.like_count ?? 0))
+        .slice(0, 5);
 
-    const translated = await translateReactions(topReactions, artists, topicHint);
+      const translated = await translateReactions(topReactions, artists, topicHint);
 
-    const reactionRows = topReactions.map((r, i) => ({
-      article_id: articleRow.id,
-      content_en: translated[i]?.en || r.original_text_ko || "",
-      content_es: translated[i]?.es || r.original_text_ko || "",
-      likes: r.like_count ?? 0,
-      source: r.source_name,
-    }));
-    await sb.from("top_reactions").insert(reactionRows);
+      const reactionRows = topReactions.map((r, i) => ({
+        article_id: articleRow.id,
+        content_en: translated[i]?.en || r.original_text_ko || "",
+        content_es: translated[i]?.es || r.original_text_ko || "",
+        likes: r.like_count ?? 0,
+        source: r.source_name,
+      }));
+      await sb.from("top_reactions").insert(reactionRows);
+    }
+
+    // Save source links from cluster's raw source items
+    if (cluster) {
+      const { data: sourceItems } = await sb.from("raw_source_items")
+        .select("title, url, source_name")
+        .in("id", (cluster.source_item_ids ?? []) as string[])
+        .limit(5);
+
+      if (sourceItems && sourceItems.length > 0) {
+        const slRows = sourceItems.map((s: Record<string, string>) => ({
+          article_id: articleRow.id,
+          title: s.title || s.source_name || "Source",
+          url: s.url || "",
+          type: "article",
+        })).filter((s: Record<string, string>) => s.url);
+        if (slRows.length > 0) await sb.from("source_links").insert(slRows);
+      }
+    }
   }
 }
 

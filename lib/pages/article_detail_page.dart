@@ -52,6 +52,8 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
                     _sectionDivider(),
                     _buildTopReactions(lang),
                     _sectionDivider(),
+                    _buildSourcesAccordion(lang),
+                    _sectionDivider(),
                     _buildUserComments(provider, lang),
                     const SizedBox(height: 80),
                   ],
@@ -237,7 +239,6 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       _buildKoreanReaction(lang),
       _sectionDivider(),
       _buildContextForFans(lang),
-      if (_a.originalSources.isNotEmpty) ...[_sectionDivider(), _buildOriginalSources(lang)],
     ];
   }
 
@@ -677,58 +678,123 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
     );
   }
 
-  // ── Original Sources ──
+  // ── Sources Accordion (shown on ALL articles) ──
 
-  Widget _buildOriginalSources(String lang) {
+  Widget _buildSourcesAccordion(String lang) {
     final sources = _a.originalSources;
-    final previewCount = 2;
-    final hasMore = sources.length > previewCount;
-    final visible = _sourcesExpanded ? sources : sources.take(previewCount).toList();
+    final reactionSources = _a.topReactions.map((r) => r.source).where((s) => s.isNotEmpty).toSet().toList();
+    final imageUrl = _a.imageUrl;
+    final hasImage = imageUrl.isNotEmpty && imageUrl.startsWith('http');
+    final hasSources = sources.isNotEmpty;
+    final hasReactionSources = reactionSources.isNotEmpty;
+
+    if (!hasSources && !hasReactionSources && !hasImage) {
+      return const SizedBox.shrink();
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: _sectionHeader(
-                  Icons.link_rounded,
-                  '${lang == 'es' ? 'Fuentes originales' : 'Original sources'} (${sources.length})',
-                ),
+          GestureDetector(
+            onTap: () => setState(() => _sourcesExpanded = !_sourcesExpanded),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+              decoration: BoxDecoration(
+                color: KokColors.surfaceLight,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: KokColors.border, width: 0.5),
               ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ...visible.map((source) => _buildSourceLink(source)),
-          if (hasMore)
-            GestureDetector(
-              onTap: () => setState(() => _sourcesExpanded = !_sourcesExpanded),
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                alignment: Alignment.center,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _sourcesExpanded
-                          ? (lang == 'es' ? 'Mostrar menos' : 'Show less')
-                          : (lang == 'es' ? 'Ver ${sources.length - previewCount} mas' : 'Show ${sources.length - previewCount} more'),
-                      style: TextStyle(fontSize: 12, color: KokColors.primary, fontWeight: FontWeight.w600),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline_rounded, size: 16, color: KokColors.textMuted),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      lang == 'es' ? 'Fuentes y atribuciones' : 'Sources & Attribution',
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: KokColors.textSecondary),
                     ),
-                    const SizedBox(width: 4),
-                    Icon(
-                      _sourcesExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
-                      size: 16,
-                      color: KokColors.primary,
+                  ),
+                  Icon(
+                    _sourcesExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+                    size: 20,
+                    color: KokColors.textMuted,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_sourcesExpanded) ...[
+            const SizedBox(height: 12),
+            if (hasSources) ...[
+              _sourceSubHeader(lang == 'es' ? 'Fuentes del contenido' : 'Content Sources'),
+              const SizedBox(height: 8),
+              ...sources.map((source) => _buildSourceLink(source)),
+              const SizedBox(height: 12),
+            ],
+            if (hasReactionSources) ...[
+              _sourceSubHeader(lang == 'es' ? 'Fuentes de reacciones' : 'Reaction Sources'),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: reactionSources.map((src) => Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: KokColors.accent.withAlpha(15),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: KokColors.accent.withAlpha(40)),
+                  ),
+                  child: Text(src, style: const TextStyle(fontSize: 11, color: KokColors.accentLight, fontWeight: FontWeight.w600)),
+                )).toList(),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (hasImage) ...[
+              _sourceSubHeader(lang == 'es' ? 'Imagen' : 'Image'),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: KokColors.surfaceLight,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: KokColors.border, width: 0.5),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.image_rounded, size: 14, color: KokColors.textMuted),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _a.extraData['image_source'] as String? ?? (lang == 'es' ? 'Naver (búsqueda de imágenes)' : 'Naver Image Search'),
+                        style: const TextStyle(fontSize: 11, color: KokColors.textMuted, height: 1.3),
+                      ),
                     ),
                   ],
                 ),
               ),
+            ],
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                lang == 'es'
+                    ? 'Todo el contenido se basa en publicaciones públicas de comunidades coreanas. Las traducciones son generadas por IA.'
+                    : 'All content is based on publicly available Korean community posts. Translations are AI-generated.',
+                style: TextStyle(fontSize: 10, color: KokColors.textMuted.withAlpha(150), height: 1.4),
+              ),
             ),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _sourceSubHeader(String title) {
+    return Text(
+      title,
+      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: KokColors.textMuted, letterSpacing: 0.5),
     );
   }
 
