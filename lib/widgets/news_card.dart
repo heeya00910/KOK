@@ -294,7 +294,7 @@ class _SentimentBadge extends StatelessWidget {
     final (icon, color, label) = switch (sentiment) {
       'positive' || 'supportive' => (Icons.trending_up_rounded, KokColors.success, 'Supportive'),
       'negative' || 'critical' => (Icons.trending_down_rounded, KokColors.error, 'Critical'),
-      'mixed' || 'divided' => (Icons.swap_vert_rounded, KokColors.warning, 'Divided'),
+      'mixed' || 'divided' => (Icons.swap_vert_rounded, KokColors.warning, 'Mixed'),
       'amused' => (Icons.sentiment_very_satisfied_rounded, const Color(0xFFFFB74D), 'Amused'),
       _ => (Icons.horizontal_rule_rounded, KokColors.textMuted, 'Neutral'),
     };

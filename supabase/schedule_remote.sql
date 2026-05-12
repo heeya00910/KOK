@@ -75,18 +75,29 @@ SELECT cron.schedule('ai_analyze_1', '30 1 * * *', $$SELECT invoke_pipeline_stag
 SELECT cron.schedule('ai_analyze_2', '30 7 * * *', $$SELECT invoke_pipeline_stage('ai_analyze')$$);
 SELECT cron.schedule('ai_analyze_3', '30 13 * * *', $$SELECT invoke_pipeline_stage('ai_analyze')$$);
 
--- Gemini 3x/day
+-- Gemini (main cards) 3x/day
 SELECT cron.schedule('ai_generate_1', '0 2 * * *', $$SELECT invoke_pipeline_stage('ai_generate')$$);
 SELECT cron.schedule('ai_generate_2', '0 8 * * *', $$SELECT invoke_pipeline_stage('ai_generate')$$);
 SELECT cron.schedule('ai_generate_3', '0 14 * * *', $$SELECT invoke_pipeline_stage('ai_generate')$$);
 
+-- Supplementary (Fan Sentiment, Buzz, Splits) 4x/day via Cerebras
+SELECT cron.schedule('gen_supplementary_1', '30 2 * * *', $$SELECT invoke_pipeline_stage('generate_supplementary')$$);
+SELECT cron.schedule('gen_supplementary_2', '30 8 * * *', $$SELECT invoke_pipeline_stage('generate_supplementary')$$);
+SELECT cron.schedule('gen_supplementary_3', '30 14 * * *', $$SELECT invoke_pipeline_stage('generate_supplementary')$$);
+SELECT cron.schedule('gen_supplementary_4', '30 20 * * *', $$SELECT invoke_pipeline_stage('generate_supplementary')$$);
+
+-- Snacks 3x/day
+SELECT cron.schedule('gen_snacks_1', '45 2 * * *', $$SELECT invoke_pipeline_stage('generate_snacks')$$);
+SELECT cron.schedule('gen_snacks_2', '45 8 * * *', $$SELECT invoke_pipeline_stage('generate_snacks')$$);
+SELECT cron.schedule('gen_snacks_3', '45 14 * * *', $$SELECT invoke_pipeline_stage('generate_snacks')$$);
+
 -- Cleanup
 SELECT cron.schedule('cleanup_expired', '0 18 * * *', $$SELECT invoke_pipeline_stage('cleanup')$$);
 
--- Budget reset
+-- Budget reset (increased Cerebras to support supplementary generation + translation)
 SELECT cron.schedule('reset_ai_budgets', '0 15 * * *', $$
   INSERT INTO ai_daily_budgets (provider, budget_date, max_calls) VALUES
-    ('cerebras', CURRENT_DATE, 100),
+    ('cerebras', CURRENT_DATE, 150),
     ('groq', CURRENT_DATE, 50),
     ('gemini', CURRENT_DATE, 30)
   ON CONFLICT (provider, budget_date) DO UPDATE SET

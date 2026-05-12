@@ -339,7 +339,7 @@ BEGIN
       p_provider,
       CURRENT_DATE,
       CASE p_provider
-        WHEN 'cerebras' THEN 100
+        WHEN 'cerebras' THEN 150
         WHEN 'groq' THEN 50
         WHEN 'gemini' THEN 30
         ELSE 50

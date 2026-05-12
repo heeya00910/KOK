@@ -737,22 +737,35 @@ async function buildClusters(): Promise<number> {
 
   const clusters: Record<string, Array<typeof items[0]>> = {};
 
+  function extractTopicWords(title: string): string[] {
+    return title
+      .replace(/[^\uAC00-\uD7AF가-힣a-zA-Z0-9\s]/g, "")
+      .split(/\s+/)
+      .filter((w: string) => w.length >= 2);
+  }
+
+  function titlesShareTopic(titleA: string, titleB: string): boolean {
+    const wordsA = new Set(extractTopicWords(titleA));
+    const wordsB = new Set(extractTopicWords(titleB));
+    if (wordsA.size === 0 || wordsB.size === 0) return false;
+    const overlap = [...wordsA].filter(w => wordsB.has(w)).length;
+    const minSize = Math.min(wordsA.size, wordsB.size);
+    return overlap / minSize >= 0.4;
+  }
+
   for (const item of items) {
     const noiseFlags = item.noise_flags as Record<string, number> ?? {};
     if ((noiseFlags.noise_score ?? 0) >= 70) continue;
     if ((noiseFlags.pr_score ?? 0) >= 85) continue;
 
     const artists = (item.artist_tags ?? []) as string[];
+    const title = (item.title ?? "") as string;
     let groupKey: string;
 
     if (artists.length > 0) {
       groupKey = artists.sort().join("+");
     } else {
-      const title = (item.title ?? "") as string;
-      const words = title
-        .replace(/[^\uAC00-\uD7AFa-zA-Z0-9\s]/g, "")
-        .split(/\s+/)
-        .filter((w: string) => w.length >= 2);
+      const words = extractTopicWords(title);
       if (words.length < 2) continue;
       groupKey = `_title:${words.slice(0, 3).join("+")}`;
     }
@@ -761,6 +774,11 @@ async function buildClusters(): Promise<number> {
     for (const existingKey of Object.keys(clusters)) {
       const existingGroup = existingKey.split(":")[0];
       if (existingGroup === groupKey || existingGroup === groupKey.split(":")[0]) {
+        const existingItems = clusters[existingKey];
+        const existingTitle = existingItems[0]?.title ?? "";
+        if (artists.length > 0 && !titlesShareTopic(title, existingTitle) && existingItems.length >= 2) {
+          continue;
+        }
         clusters[existingKey].push(item);
         matched = true;
         break;
@@ -796,6 +814,14 @@ async function buildClusters(): Promise<number> {
       ((b.raw_metrics as Record<string, number>)?.comment_count ?? 0) ? a : b
     ).title;
 
+    const allTitles = [...new Set(clusterItems.map(ci => ci.title as string).filter(Boolean))];
+    const topicContext = allTitles.slice(0, 5).join(" | ");
+    const snippets = clusterItems
+      .map(ci => (ci.snippet as string) ?? "")
+      .filter(s => s.length > 20)
+      .slice(0, 3);
+    const contextSummary = snippets.join(" ");
+
     await sb.from("issue_clusters").upsert({
       cluster_key: clusterKey,
       main_title_ko: bestTitle,
@@ -811,6 +837,9 @@ async function buildClusters(): Promise<number> {
       nate_article_count: nateCount,
       youtube_video_count: ytCount,
       cross_source_overlap: sourceOverlap,
+      topic_context: topicContext,
+      context_snippets: contextSummary.slice(0, 500),
+      all_titles: allTitles.slice(0, 8),
       noise_score: Math.max(...clusterItems.map(ci => (ci.noise_flags as Record<string, number>)?.noise_score ?? 0)),
       pr_score: Math.max(...clusterItems.map(ci => (ci.noise_flags as Record<string, number>)?.pr_score ?? 0)),
       legal_risk_score: Math.max(...clusterItems.map(ci => calcLegalRisk(ci.title))),
@@ -958,24 +987,27 @@ async function aiScreenClusters(): Promise<number> {
     .in("status", ["candidate", "pending_more_signals"])
     .gte("trend_score", 20)
     .order("trend_score", { ascending: false })
-    .limit(30);
+    .limit(15);
 
   if (!clusters || clusters.length === 0) return 0;
 
   let screened = 0;
   for (const c of clusters) {
+    const topicDetail = c.topic_context ?? c.main_title_ko;
     const prompt = `You are a Korean entertainment editor for a global K-pop fan app. Evaluate this issue cluster.
 
-Title: ${c.main_title_ko}
+Main Title: ${c.main_title_ko}
+Related Headlines: ${topicDetail}
 Artists: ${(c.related_artists ?? []).join(", ")}
 Sources: ${c.source_count} from ${(c.source_types ?? []).join(", ")}
 Pann posts: ${c.pann_post_count}, TheQoo: ${c.theqoo_square_post_count}
 
+Is this a SINGLE coherent topic? (If headlines describe multiple unrelated events, issue_clarity_score should be low)
 Is this a real Korean-local K-pop issue worth showing to global fans?
 Is this just promotional/generic content?
 
 Return JSON only:
-{"keep_candidate":bool,"is_kpop_relevant":bool,"is_generic_pr":bool,"noise_score":0-100,"pr_score":0-100,"issue_clarity_score":0-100,"recommended_status":"keep|manual_review|reject","reasoning_brief":"..."}`;
+{"keep_candidate":bool,"is_kpop_relevant":bool,"is_generic_pr":bool,"is_single_coherent_topic":bool,"noise_score":0-100,"pr_score":0-100,"issue_clarity_score":0-100,"recommended_status":"keep|manual_review|reject","reasoning_brief":"..."}`;
 
     try {
       const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
@@ -1163,11 +1195,16 @@ async function generateCards(): Promise<number> {
     const sourceList = (sources ?? []).map(s => `- [${s.source_name}] ${s.title}\n  ${s.url}`).join("\n");
     const reactionList = (reactions ?? []).map(r => `- [${r.like_count} likes] ${r.original_text_ko}`).join("\n");
 
+    const topicDetail = (c as ClusterRow).topic_context ?? c.main_title_ko;
+    const contextInfo = (c as ClusterRow).context_snippets ?? "";
+
     const prompt = `You are the editorial writer for KOK, a K-pop reaction curation app for global fans.
 
 Generate a KOK card in English and Spanish.
 
 ISSUE: ${c.main_title_ko}
+RELATED HEADLINES: ${topicDetail}
+${contextInfo ? `ADDITIONAL CONTEXT: ${contextInfo}` : ""}
 ARTISTS: ${(c.related_artists ?? []).join(", ")}
 REACTION THEMES: ${(groqReview.main_reaction_themes as string[] ?? []).join(", ")}
 
@@ -1185,6 +1222,13 @@ RULES:
 - Make it feel like polished Korean-local reaction curation
 - Concise, trendy, vivid but careful tone
 
+ALIGNMENT RULES (CRITICAL — violating these = failed output):
+- The title MUST be about the SAME artist(s) mentioned in ARTISTS field. NEVER reference unrelated artists.
+- The title, what_happened, korean_reaction_summary, and representative_reactions MUST all describe the SAME event/topic.
+- representative_reactions must be reactions TO THIS SPECIFIC TOPIC. Never include random unrelated comments.
+- If the artist is "Park Bo-young", every section must be about Park Bo-young — not "TXT" or any other artist.
+- tags and artist names must ONLY include entities actually involved in THIS specific issue.
+
 Return JSON only:
 {
   "title_en":"...",
@@ -1201,7 +1245,7 @@ Return JSON only:
   "representative_reactions_es":["..."],
   "tags":["artist1","topic"],
   "issue_type":"PERFORMANCE_REACTION|COMEBACK_REACTION|STYLE_REACTION|AGENCY_ISSUE|CONTROVERSY|CONTRACT_LEGAL|PUBLIC_IMAGE|CONTENT_REACTION|OTHER",
-  "reaction_tone":"supportive|critical|divided|amused|mixed",
+  "reaction_tone":"supportive|critical|mixed|amused",
   "risk_level":"low|medium"
 }`;
 
@@ -1249,7 +1293,7 @@ Return JSON only:
         reaction_sources: [...new Set((reactions ?? []).map(r => r.source_name))],
         tags,
         issue_type: issueType,
-        reaction_tone: card.reaction_tone ?? "mixed",
+        reaction_tone: (card.reaction_tone === "divided" ? "mixed" : card.reaction_tone) ?? "mixed",
         risk_level: card.risk_level ?? "low",
         status: "published",
         published_at: now,
@@ -1273,7 +1317,7 @@ Return JSON only:
         image_url: cardImageUrl,
         issue_tags: [issueType],
         artist_tags: tags,
-        sentiment: card.reaction_tone ?? "mixed",
+        sentiment: (card.reaction_tone === "divided" ? "mixed" : card.reaction_tone) ?? "mixed",
         reaction_sample_size: (reactions ?? []).length,
         content_type: "KOK_ISSUE_CARD",
         content_tier: "heavy",
@@ -1349,6 +1393,9 @@ interface ClusterRow {
   status: string;
   ai_review_json: Record<string, unknown> | null;
   source_item_ids: string[] | null;
+  topic_context: string | null;
+  context_snippets: string | null;
+  all_titles: string[] | null;
   [key: string]: unknown;
 }
 
@@ -1449,27 +1496,36 @@ async function genBuzzSnack(
     .map(r => `- [${r.source_name}, ${r.like_count ?? 0} likes] "${r.original_text_ko}"`)
     .join("\n");
 
+  const artists = (cluster.related_artists ?? []).join(", ");
+  const topicDetail = cluster.topic_context ?? cluster.main_title_ko;
+  const contextInfo = cluster.context_snippets ? `\nADDITIONAL CONTEXT: ${cluster.context_snippets}` : "";
   const prompt = `You are a K-pop reaction curator for global fans.
 
 TOPIC: ${cluster.main_title_ko}
-ARTISTS: ${(cluster.related_artists ?? []).join(", ")}
+RELATED HEADLINES: ${topicDetail}${contextInfo}
+ARTISTS: ${artists}
 
 Korean online reactions:
 ${reactionsText}
 
 ${SAFETY_RULES}
 
+ALIGNMENT RULES:
+- The title MUST be specifically about ${artists || 'the topic above'} and the SPECIFIC issue described in the topic/headlines. Never mention unrelated artists or unrelated events.
+- Every field must describe the SAME topic. The summary, reaction point, and title must align perfectly.
+- artist_tags must ONLY include artists actually discussed in the comments above.
+
 Create a short snack card about what Korean communities are noticing. Return JSON only:
 {
-  "title_en":"[catchy headline]",
-  "title_es":"[same in Spanish]",
-  "short_summary_en":"[2-3 sentences, what's being noticed]",
+  "title_en":"[catchy headline specifically about ${artists || 'this topic'} — max 80 chars]",
+  "title_es":"[same in natural Spanish]",
+  "short_summary_en":"[2-3 sentences, what specifically fans are noticing about ${artists || 'this topic'}]",
   "short_summary_es":"[same in Spanish]",
-  "korean_reaction_point_en":"[the core reaction in one sentence]",
+  "korean_reaction_point_en":"[the core fan reaction in one specific sentence]",
   "korean_reaction_point_es":"[same]",
   "source_hint":"[e.g. Nate Pann, TheQoo]",
-  "sentiment":"supportive|critical|divided|amused|mixed",
-  "artist_tags":["..."]
+  "sentiment":"supportive|critical|mixed|amused",
+  "artist_tags":["only artists actually discussed"]
 }`;
 
   return await callCerebras(prompt, 400);
@@ -1485,28 +1541,37 @@ async function genReactionSplit(
     .map(r => `- [${r.source_name}, ${r.like_count ?? 0} likes] "${r.original_text_ko}"`)
     .join("\n");
 
+  const artists = (cluster.related_artists ?? []).join(", ");
+  const topicDetail = cluster.topic_context ?? cluster.main_title_ko;
+  const contextInfo = cluster.context_snippets ? `\nADDITIONAL CONTEXT: ${cluster.context_snippets}` : "";
   const prompt = `You are a K-pop reaction analyst for global fans.
 
 TOPIC: ${cluster.main_title_ko}
-ARTISTS: ${(cluster.related_artists ?? []).join(", ")}
+RELATED HEADLINES: ${topicDetail}${contextInfo}
+ARTISTS: ${artists}
 
 Korean reactions showing divided opinions:
 ${reactionsText}
 
 ${SAFETY_RULES}
 
+ALIGNMENT RULES:
+- The title MUST be about ${artists || 'this topic'} and the SPECIFIC issue described above. Never reference unrelated artists or topics.
+- Both sides (side_a, side_b) must be about the SAME specific topic — they represent opposing views on ONE issue.
+- artist_tags must ONLY include artists actually discussed.
+
 Identify two sides of the reaction and summarize safely. Return JSON only:
 {
-  "title_en":"[headline about the split]",
-  "title_es":"[same in Spanish]",
-  "side_a_en":"[what one side is saying, 2-3 sentences]",
+  "title_en":"[headline about ${artists || 'the topic'} and why fans are split — max 80 chars]",
+  "title_es":"[same in natural Spanish]",
+  "side_a_en":"[what one side is saying about ${artists || 'this'}, 2-3 sentences]",
   "side_a_es":"[same]",
-  "side_b_en":"[what the other side is saying, 2-3 sentences]",
+  "side_b_en":"[what the other side is saying about ${artists || 'this'}, 2-3 sentences]",
   "side_b_es":"[same]",
-  "what_the_split_means_en":"[brief context, 1-2 sentences]",
+  "what_the_split_means_en":"[brief context about why this matters, 1-2 sentences]",
   "what_the_split_means_es":"[same]",
-  "sentiment":"divided",
-  "artist_tags":["..."]
+  "sentiment":"mixed",
+  "artist_tags":["only artists actually discussed"]
 }`;
 
   return await callCerebras(prompt, 600);
@@ -1523,29 +1588,53 @@ async function genCommentMood(
     .map(r => `- [${r.like_count ?? 0} likes] "${r.original_text_ko}"`)
     .join("\n");
 
-  const prompt = `You are a K-pop comment mood analyst for global fans.
+  const artists = (cluster.related_artists ?? []).join(", ");
+  const topicDetail = cluster.topic_context ?? cluster.main_title_ko;
+  const contextInfo = cluster.context_snippets ? `\nADDITIONAL CONTEXT: ${cluster.context_snippets}` : "";
+
+  const prompt = `You are a precise fan sentiment analyst for a K-pop reaction app targeting global fans.
 
 TOPIC: ${cluster.main_title_ko}
-ARTISTS: ${(cluster.related_artists ?? []).join(", ")}
+RELATED HEADLINES: ${topicDetail}${contextInfo}
+ARTISTS: ${artists}
 
-Korean comments to analyze mood:
+Korean fan comments to analyze:
 ${reactionsText}
 
 ${SAFETY_RULES}
 
-Classify the overall mood and estimate percentages. Return JSON only:
+YOUR TASK: Analyze the ACTUAL sentiment in these comments and produce a fan sentiment card.
+
+CRITICAL RULES FOR ACCURACY:
+1. TITLE MUST match the actual topic AND the dominant sentiment. The title should reflect what fans are specifically reacting to.
+   - If about artist A, the title MUST be about artist A. NEVER mention unrelated artists.
+   - The title must convey the sentiment direction (e.g., "Fans Can't Stop Praising..." for positive, "Fans Are Split Over..." for mixed).
+2. MOOD DETECTION — be mathematically precise:
+   - "positive": 70%+ of comments are praise/support/excitement. Do NOT mark as "mixed" if overwhelmingly positive.
+   - "critical": 70%+ of comments express disappointment/anger/criticism.
+   - "amused": 70%+ of comments are laughing/joking/finding humor.
+   - "curious": 70%+ of comments express curiosity/anticipation.
+   - "mixed": ONLY when there is genuine division — significant portions both positive AND negative (at least 25% each).
+3. MOOD DISTRIBUTION must be mathematically consistent with main_mood:
+   - If main_mood is "positive", then "positive" percentage MUST be the highest (≥50%).
+   - If main_mood is "mixed", there must be at least two categories each ≥25%.
+   - All percentages must sum to exactly 100.
+4. MOOD SUMMARY must describe the SPECIFIC reactions to THIS topic, not generic filler.
+5. artist_tags MUST only include artists actually discussed in the comments. Never add unrelated artists.
+
+Return JSON only:
 {
-  "title_en":"[mood-focused headline]",
-  "title_es":"[same in Spanish]",
-  "mood_distribution":{"positive":40,"amused":30,"critical":20,"curious":10},
-  "main_mood":"positive|mixed|critical|curious|amused|supportive",
-  "mood_summary_en":"[2-3 sentences describing the mood]",
-  "mood_summary_es":"[same in Spanish]",
-  "sentiment":"supportive|critical|divided|amused|mixed",
-  "artist_tags":["..."]
+  "title_en":"[Specific headline about ${artists || 'the topic'} reflecting the actual sentiment — max 80 chars]",
+  "title_es":"[Same in natural Spanish]",
+  "mood_distribution":{"positive":0,"amused":0,"critical":0,"curious":0},
+  "main_mood":"positive|mixed|critical|curious|amused",
+  "mood_summary_en":"[2-3 sentences describing what SPECIFICALLY fans are saying and feeling about this topic. Reference actual themes from the comments.]",
+  "mood_summary_es":"[Same in natural Spanish]",
+  "sentiment":"supportive|critical|mixed|amused",
+  "artist_tags":["only artists actually mentioned"]
 }`;
 
-  return await callCerebras(prompt, 500);
+  return await callCerebras(prompt, 600);
 }
 
 async function genStageReaction(
@@ -1556,27 +1645,33 @@ async function genStageReaction(
     .map(r => `- [${r.like_count ?? 0} likes] "${r.original_text_ko}"`)
     .join("\n");
 
+  const artists = (cluster.related_artists ?? []).join(", ");
+  const topicDetail = cluster.topic_context ?? cluster.main_title_ko;
+  const contextInfo = cluster.context_snippets ? `\nADDITIONAL CONTEXT: ${cluster.context_snippets}` : "";
   const prompt = `You are a K-pop stage reaction curator for global fans.
 
 TOPIC: ${cluster.main_title_ko}
-ARTISTS: ${(cluster.related_artists ?? []).join(", ")}
+RELATED HEADLINES: ${topicDetail}${contextInfo}
+ARTISTS: ${artists}
 
 Korean reactions to a performance/stage:
 ${reactionsText}
 
 ${SAFETY_RULES}
 
+ALIGNMENT: Title, video_title, and all content must be specifically about ${artists || 'this performance'} and the SPECIFIC performance described above. Never reference unrelated artists.
+
 Summarize the stage reaction. Return JSON only:
 {
-  "title_en":"[headline about the stage reaction]",
-  "title_es":"[same in Spanish]",
-  "video_title":"[inferred video/performance title]",
-  "performance_focus_en":"[what aspect fans are reacting to, 1-2 sentences]",
+  "title_en":"[headline about ${artists || 'this'} stage reaction — max 80 chars]",
+  "title_es":"[same in natural Spanish]",
+  "video_title":"[inferred video/performance title for ${artists || 'this artist'}]",
+  "performance_focus_en":"[what specific aspect of ${artists || 'the'} performance fans are reacting to, 1-2 sentences]",
   "performance_focus_es":"[same]",
-  "korean_comment_summary_en":"[paraphrased reactions, 2-3 sentences]",
+  "korean_comment_summary_en":"[paraphrased reactions specifically about ${artists || 'this'} performance, 2-3 sentences]",
   "korean_comment_summary_es":"[same]",
-  "sentiment":"supportive|critical|divided|amused|mixed",
-  "artist_tags":["..."]
+  "sentiment":"supportive|critical|mixed|amused",
+  "artist_tags":["only artists actually discussed"]
 }`;
 
   return await callCerebras(prompt, 400);
@@ -1593,28 +1688,34 @@ async function genSmallBuzz(
     .map(r => `- [${r.source_name}, ${r.like_count ?? 0} likes] "${r.original_text_ko}"`)
     .join("\n");
 
+  const artists = (cluster.related_artists ?? []).join(", ");
+  const topicDetail = cluster.topic_context ?? cluster.main_title_ko;
+  const contextInfo = cluster.context_snippets ? `\nADDITIONAL CONTEXT: ${cluster.context_snippets}` : "";
   const prompt = `You are a K-pop micro-trend spotter for global fans.
 
 TOPIC: ${cluster.main_title_ko}
-ARTISTS: ${(cluster.related_artists ?? []).join(", ")}
+RELATED HEADLINES: ${topicDetail}${contextInfo}
+ARTISTS: ${artists}
 
 Small but interesting Korean reactions:
 ${reactionsText}
 
 ${SAFETY_RULES}
 
+ALIGNMENT: Title and all content must be specifically about ${artists || 'this topic'} and the SPECIFIC issue described above. Never reference unrelated artists.
+
 This isn't a big issue, but it's worth noting. Return JSON only:
 {
-  "title_en":"[headline framed as a small observation]",
-  "title_es":"[same in Spanish]",
-  "observation_en":"[what's being noticed, 1-2 sentences]",
+  "title_en":"[headline about ${artists || 'this topic'} framed as a small observation — max 80 chars]",
+  "title_es":"[same in natural Spanish]",
+  "observation_en":"[what's being noticed about ${artists || 'this'}, 1-2 sentences]",
   "observation_es":"[same]",
   "why_it_is_being_noticed_en":"[why fans are talking about it, 1 sentence]",
   "why_it_is_being_noticed_es":"[same]",
   "caution_note_en":"[brief note on context, 1 sentence]",
   "caution_note_es":"[same]",
-  "sentiment":"supportive|critical|divided|amused|mixed",
-  "artist_tags":["..."]
+  "sentiment":"supportive|critical|amused|mixed",
+  "artist_tags":["only artists actually discussed"]
 }`;
 
   return await callCerebras(prompt, 400);
@@ -1772,7 +1873,8 @@ async function insertSupplementaryArticle(
 ): Promise<void> {
   const now = new Date().toISOString();
   const artists = (data.artist_tags as string[]) ?? cluster?.related_artists ?? [];
-  const sentiment = (data.sentiment as string) ?? "mixed";
+  const rawSentiment = (data.sentiment as string) ?? "mixed";
+  const sentiment = rawSentiment === "divided" ? "mixed" : rawSentiment;
 
   const bodyEn = (data.short_summary_en ?? data.mood_summary_en ?? data.observation_en ??
     data.korean_comment_summary_en ?? data.overall_summary_en ?? "") as string;
@@ -1865,25 +1967,35 @@ async function translateReactions(
     ? `Artists being discussed: ${artists.join(", ")}. ${topicHint ? `Topic: ${topicHint}.` : ""}`
     : "";
 
-  const prompt = `Translate these Korean online comments into English and Spanish.
+  const prompt = `You are an expert Korean-to-English/Spanish translator specializing in K-pop fan community language.
 
 CONTEXT: ${artistContext}
 GENDER: ${genderHint}
 
-CRITICAL RULES:
-- Translate the ACTUAL MEANING faithfully. Do NOT strip away the point of the comment.
-- If the original says something specific (praise, criticism, observation), the translation MUST convey that same specific point.
-- Keep the original energy, humor, sarcasm, and spiciness intact.
-- Only soften extreme slurs or hate speech. Regular profanity like "미쳤다", "개예쁘다", "ㄹㅇ 인정" should be translated with equivalent casual energy, not sterilized.
-- Pronouns MUST match the artist's gender. ${genderHint}
-- Do NOT add framing like "A user said..." — just translate the comment directly.
-- Keep each translation 1-2 sentences, but include the full meaning.
-- If the comment references a specific event or detail, KEEP that reference.
+TRANSLATION QUALITY STANDARDS:
+1. ACCURACY: Translate the EXACT meaning. If a fan praises visuals, the translation must be about visuals. If they comment on vocals, it must be about vocals. NEVER change what the comment is about.
+2. NATURAL ENGLISH: Write how a real English-speaking K-pop fan would naturally express the same thought. Avoid stiff literal translations.
+   - Bad: "The degree of being pretty is seriously..." → Good: "She's seriously so gorgeous it's insane"
+   - Bad: "It is the case that singing is good" → Good: "Their vocals are incredible"
+3. KOREAN SLANG GUIDE:
+   - "미쳤다/미친" → "insane/crazy (good)" (contextual praise)
+   - "개~" prefix → intensifier, translate as "so/incredibly/ridiculously"
+   - "ㄹㅇ" → "fr/for real/honestly"
+   - "인정" → "facts/agreed/valid"
+   - "존예/존잘" → "gorgeous/stunning"
+   - "레전드" → "legendary/iconic"
+   - "ㅋㅋㅋ" → convey amusement naturally without "haha"
+   - "대박" → "amazing/insane/wow"
+   - "역시" → "as expected / that's ___ for you"
+4. PRESERVE the specific subject matter. If the comment mentions a specific song, outfit, moment, or event — KEEP that reference in translation.
+5. GENDER: ${genderHint}. Use correct pronouns consistently.
+6. Do NOT add "A user said" or any framing. Translate the comment directly.
+7. Spanish must sound like a real LatAm K-pop fan — natural, current slang is fine.
 
-Korean comments:
+Korean comments to translate:
 ${koTexts}
 
-Return ONLY a JSON array, same order, no wrapping:
+Return ONLY a JSON array in the same order:
 [{"en":"...","es":"..."},...]`;
 
   try {
@@ -1895,9 +2007,12 @@ Return ONLY a JSON array, same order, no wrapping:
       },
       body: JSON.stringify({
         model: "llama3.1-8b",
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 800,
-        temperature: 0.5,
+        messages: [
+          { role: "system", content: "You are a professional Korean-English-Spanish translator specializing in K-pop fan communities. You produce natural, culturally-aware translations that preserve the original tone and specific content." },
+          { role: "user", content: prompt },
+        ],
+        max_tokens: 1000,
+        temperature: 0.4,
       }),
     });
     if (!res.ok) {
@@ -1937,10 +2052,10 @@ const GENERATORS: Record<SupplementaryType, {
     fn: genBuzzSnack, labelEn: "Buzz", labelEs: "Buzz", tier: "light", tokenCost: 400,
   },
   REACTION_SPLIT: {
-    fn: genReactionSplit, labelEn: "Reaction Split", labelEs: "Reacciones divididas", tier: "medium", tokenCost: 600,
+    fn: genReactionSplit, labelEn: "Fans Split", labelEs: "Fans Divididos", tier: "medium", tokenCost: 600,
   },
   KOREAN_COMMENT_MOOD: {
-    fn: genCommentMood, labelEn: "Comment Mood", labelEs: "Tono de comentarios", tier: "light", tokenCost: 500,
+    fn: genCommentMood, labelEn: "Fan Sentiment", labelEs: "Sentimiento Fan", tier: "light", tokenCost: 500,
   },
   STAGE_REACTION_SNACK: {
     fn: genStageReaction, labelEn: "Stage Reaction", labelEs: "Reacción al escenario", tier: "light", tokenCost: 400,
@@ -2033,7 +2148,7 @@ async function generateSupplementary(): Promise<number> {
   );
 
   let generated = 0;
-  const MAX_SUPPLEMENTARY = 12;
+  const MAX_SUPPLEMENTARY = 8;
   const usedTypes = new Set<string>();
   const usedArtists = new Map<string, number>(recentArtistCounts);
   const MAX_PER_ARTIST = 1;
@@ -2069,6 +2184,22 @@ async function generateSupplementary(): Promise<number> {
     try {
       const result = await gen.fn(cluster, reactions as ReactionRow[]);
       if (!result) continue;
+
+      if (result.sentiment === "divided") result.sentiment = "mixed";
+      if (contentType === "KOREAN_COMMENT_MOOD" && result.mood_distribution && result.main_mood) {
+        const dist = result.mood_distribution as Record<string, number>;
+        const mainMood = result.main_mood as string;
+        const maxKey = Object.entries(dist).reduce((a, b) => b[1] > a[1] ? b : a, ["", 0])[0];
+        if (mainMood === "mixed") {
+          const values = Object.values(dist);
+          const max = Math.max(...values);
+          if (max >= 65) {
+            result.main_mood = maxKey;
+          }
+        } else if (maxKey !== mainMood && dist[maxKey] > (dist[mainMood] ?? 0) + 15) {
+          result.main_mood = maxKey;
+        }
+      }
 
       await insertSupplementaryArticle(
         contentType,

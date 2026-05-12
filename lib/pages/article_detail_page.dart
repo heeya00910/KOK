@@ -177,7 +177,7 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
     final (icon, color, label) = switch (_a.sentiment) {
       'positive' || 'supportive' => (Icons.trending_up_rounded, KokColors.success, 'Supportive'),
       'negative' || 'critical' => (Icons.trending_down_rounded, KokColors.error, 'Critical'),
-      'mixed' || 'divided' => (Icons.swap_vert_rounded, KokColors.warning, 'Divided'),
+      'mixed' || 'divided' => (Icons.swap_vert_rounded, KokColors.warning, 'Mixed'),
       'amused' => (Icons.sentiment_very_satisfied_rounded, const Color(0xFFFFB74D), 'Amused'),
       _ => (Icons.horizontal_rule_rounded, KokColors.textMuted, 'Neutral'),
     };
@@ -260,7 +260,7 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          _sectionHeader(Icons.swap_horiz_rounded, lang == 'es' ? 'Opiniones divididas' : 'Divided opinions'),
+          _sectionHeader(Icons.swap_horiz_rounded, lang == 'es' ? 'Opiniones encontradas' : 'Fans Are Split'),
           const SizedBox(height: 16),
           _splitBox(Icons.thumb_up_alt_rounded, KokColors.success, lang == 'es' ? 'Algunos dicen...' : 'Some say...', sideA),
           const SizedBox(height: 10),
@@ -301,26 +301,26 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          _sectionHeader(Icons.mood_rounded, lang == 'es' ? 'Estado de ánimo' : 'Comment mood'),
+          _sectionHeader(Icons.mood_rounded, lang == 'es' ? 'Sentimiento de fans' : 'Fan Sentiment'),
           const SizedBox(height: 16),
           _moodBadge(mood),
           if (dist != null) ...[const SizedBox(height: 16), _moodBars(dist)],
         ]),
       ),
       _sectionDivider(),
-      _buildSection(icon: Icons.summarize_rounded, title: lang == 'es' ? 'Resumen' : 'Mood summary', body: _a.whatHappened(lang)),
+      _buildSection(icon: Icons.summarize_rounded, title: lang == 'es' ? 'Resumen del sentimiento' : 'Sentiment Summary', body: _a.whatHappened(lang)),
     ];
   }
 
   Widget _moodBadge(String mood) {
-    final (color, label) = switch (mood.toLowerCase()) {
-      'positive' || 'mostly positive' => (KokColors.success, mood),
-      'supportive' => (KokColors.success, mood),
-      'critical' || 'mildly critical' || 'strongly critical' => (KokColors.error, mood),
-      'amused' => (const Color(0xFFFFB74D), mood),
-      'curious' => (KokColors.accent, mood),
-      'divided' => (KokColors.warning, mood),
-      _ => (KokColors.warning, mood.isEmpty ? 'Mixed' : mood),
+    final normalized = mood.toLowerCase().trim();
+    final (color, displayLabel) = switch (normalized) {
+      'positive' || 'mostly positive' || 'supportive' => (KokColors.success, 'Positive'),
+      'critical' || 'mildly critical' || 'strongly critical' => (KokColors.error, 'Critical'),
+      'amused' => (const Color(0xFFFFB74D), 'Amused'),
+      'curious' => (KokColors.accent, 'Curious'),
+      'mixed' || 'divided' => (KokColors.warning, 'Mixed'),
+      _ => (KokColors.warning, 'Mixed'),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -328,7 +328,7 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(Icons.circle, size: 10, color: color),
         const SizedBox(width: 8),
-        Text(mood.isNotEmpty ? mood[0].toUpperCase() + mood.substring(1) : 'Mixed', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: color)),
+        Text(displayLabel, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: color)),
       ]),
     );
   }
@@ -525,7 +525,7 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
     final (icon, color, label) = switch (_a.sentiment) {
       'positive' || 'supportive' => (Icons.trending_up_rounded, KokColors.success, lang == 'es' ? 'Positivo' : 'Supportive'),
       'negative' || 'critical' => (Icons.trending_down_rounded, KokColors.error, lang == 'es' ? 'Cr\u00edtico' : 'Critical'),
-      'mixed' || 'divided' => (Icons.swap_vert_rounded, KokColors.warning, lang == 'es' ? 'Dividido' : 'Divided'),
+      'mixed' || 'divided' => (Icons.swap_vert_rounded, KokColors.warning, lang == 'es' ? 'Mixto' : 'Mixed'),
       'amused' => (Icons.sentiment_very_satisfied_rounded, const Color(0xFFFFB74D), lang == 'es' ? 'Divertido' : 'Amused'),
       _ => (Icons.horizontal_rule_rounded, KokColors.textMuted, lang == 'es' ? 'Neutral' : 'Neutral'),
     };
@@ -586,7 +586,7 @@ class _ArticleDetailPageState extends State<ArticleDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _sectionHeader(Icons.format_quote_rounded, lang == 'es' ? 'Reacciones traducidas' : 'Top translated reactions'),
+          _sectionHeader(Icons.format_quote_rounded, lang == 'es' ? 'Reacciones destacadas' : 'Top Fan Reactions'),
           const SizedBox(height: 12),
           if (_validReactions(lang).isEmpty)
             Container(

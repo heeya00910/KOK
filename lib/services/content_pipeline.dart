@@ -158,7 +158,7 @@ JSON으로 출력:
 {
   "is_relevant": true,
   "issue_summary_ko": "왜 이게 화제인지, 맥락과 의미를 담은 한국어 요약 (2~3문장). 단순 사실 나열 X. 팬이 아닌 사람도 이해할 수 있도록 배경 포함.",
-  "reaction_tone": "supportive/critical/divided/amused/neutral",
+  "reaction_tone": "supportive/critical/mixed/amused/neutral",
   "issue_tags": ["COMEBACK"],
   "artist_tags": ["BTS"],
   "has_real_comments": $hasRealComments,
@@ -173,11 +173,11 @@ JSON으로 출력:
   * false: 제목만 자극적이고 내용이 없는 낚시 기사
 - issue_summary_ko: "왜 한국에서 화제인지"를 설명. 맥락, 배경, 의미를 담아라.
 - reaction_tone (가장 중요!! "neutral"을 기본값으로 쓰지 마라):
-  * "supportive": 팬 응원/기대/자랑 (컴백, 수상, 선행, 성과)
-  * "critical": 비판/분노 주류 (논란, 스캔들, 갑질)
-  * "divided": 찬반 갈림 (열애, 이적, 논쟁, 팬덤 갈등)
-  * "amused": 웃기거나 밈화 (예능, 에피소드, TMI)
-  * "neutral": 위 4가지 어디에도 해당 안 되는 순수 정보만
+  * "supportive": 팬 응원/기대/자랑이 70%+ (컴백, 수상, 선행, 성과)
+  * "critical": 비판/분노가 70%+ (논란, 스캔들, 갑질)
+  * "mixed": 찬반 갈림 — 긍정과 부정이 모두 25%+ 존재 (열애, 이적, 논쟁, 팬덤 갈등)
+  * "amused": 웃기거나 밈화가 70%+ (예능, 에피소드, TMI)
+  * "neutral": 위 4가지 어디에도 해당 안 되는 순수 정보만 (거의 사용 X)
 - issue_tags: COMEBACK, CHART, AWARD, AGENCY, CONTRACT, CONTROVERSY, FANDOM, MILITARY, RELATIONSHIP, LEGAL, SOCIAL_MEDIA, PERFORMANCE, COLLABORATION, BRAND_DEAL, VARIETY_SHOW, WORLD_TOUR, DEBUT, DISBANDMENT, SOLO, OST 중 선택
 - artist_tags: 공식 영어 이름 사용 (ARTIST NAME MAP 참고)
 - importance_score: 1~10. 7 이상이면 진짜 핫한 이슈만.
@@ -277,6 +277,9 @@ HARD RULES (violating these = failed output):
 5. NO filler phrases: "sparks buzz", "making waves", "takes the internet by storm", "fans are excited" — these are BANNED. Be specific instead.
 6. Spanish must sound like a real LatAm Gen-Z K-pop fan wrote it — NOT Google Translate.
 7. Every field must deliver genuine value. If you can't write something interesting, write something insightful.
+8. CONTENT ALIGNMENT: The title, what_happened, korean_reaction_summary, top_reactions, and why_it_matters MUST all be about the SAME specific topic. If the topic is about Artist X, NEVER mention unrelated Artist Y in the title.
+9. top_reactions must be direct translations of the real comments about THIS topic. They must align with the mood described in korean_reaction_summary.
+10. TRANSLATION QUALITY: Translate Korean comments naturally — not literal word-by-word. Preserve the commenter's intent, humor, and specific references. "미쳤다" = "insane/crazy (as praise)", "개예쁘다" = "ridiculously pretty", etc.
 ''';
 
     final result = await _ai.generateCardJson(prompt, maxTokens: 3000);
@@ -286,6 +289,10 @@ HARD RULES (violating these = failed output):
     final outputSafety = _safety.checkTranslatedContent('$titleEn $bodyEn');
     if (outputSafety.level == SafetyLevel.blocked) {
       return {'blocked': true, 'reason': outputSafety.reason};
+    }
+
+    if (result['sentiment'] == 'divided') {
+      result['sentiment'] = 'mixed';
     }
 
     return result;

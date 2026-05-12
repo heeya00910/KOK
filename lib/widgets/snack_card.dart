@@ -13,8 +13,8 @@ class SnackCard extends StatelessWidget {
 
   static const _typeMeta = <String, (Color, String, String)>{
     'KOREAN_BUZZ_SNACK': (KokColors.primary, 'Buzz', 'Buzz'),
-    'REACTION_SPLIT': (KokColors.warning, 'Reaction Split', 'División de Reacción'),
-    'KOREAN_COMMENT_MOOD': (KokColors.accent, 'Comment Mood', 'Ánimo de Comentarios'),
+    'REACTION_SPLIT': (KokColors.warning, 'Fans Split', 'Fans Divididos'),
+    'KOREAN_COMMENT_MOOD': (KokColors.accent, 'Fan Sentiment', 'Sentimiento Fan'),
     'STAGE_REACTION_SNACK': (KokColors.success, 'Stage Reaction', 'Reacción en Vivo'),
     'KEYWORD_PULSE': (Color(0xFF7C4DFF), 'Keyword Pulse', 'Pulso de Palabras'),
     'WHY_KOREANS_CARE': (Color(0xFF00897B), 'Context', 'Contexto'),
@@ -269,15 +269,24 @@ class SnackCard extends StatelessWidget {
   }
 
   List<Widget> _commentMood(String lang) {
-    final mood = article.extraData['main_mood'] as String? ?? '';
+    final rawMood = (article.extraData['main_mood'] as String? ?? '').toLowerCase().trim();
     final dist = article.extraData['mood_distribution'] as Map<String, dynamic>?;
     final positive = dist != null ? (dist['positive'] as num?)?.toDouble() : null;
     final critical = dist != null ? (dist['critical'] as num?)?.toDouble() : null;
     final summary = article.whatHappened(lang);
 
+    final displayMood = switch (rawMood) {
+      'positive' || 'mostly positive' || 'supportive' => 'Positive',
+      'critical' || 'mildly critical' || 'strongly critical' => 'Critical',
+      'amused' => 'Amused',
+      'curious' => 'Curious',
+      'mixed' || 'divided' => 'Mixed',
+      _ => rawMood.isNotEmpty ? rawMood[0].toUpperCase() + rawMood.substring(1) : 'Mixed',
+    };
+
     return [
       _title(lang),
-      if (mood.isNotEmpty) ...[
+      if (displayMood.isNotEmpty) ...[
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -286,7 +295,7 @@ class SnackCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
           ),
           child: Text(
-            mood,
+            displayMood,
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: KokColors.accentLight),
           ),
         ),
